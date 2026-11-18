@@ -30,7 +30,10 @@ class XcodePipelineTests(unittest.TestCase):
                 with self.subTest(graphics=graphics, derived=derived):
                     self.prepare_fixture(graphics, derived)
 
-    def prepare_fixture(self, graphics, derived):
+    def test_opengl_without_glslang_stops_before_capture(self):
+        self.prepare_fixture('gl', False, missing_glslang=True)
+
+    def prepare_fixture(self, graphics, derived, *, missing_glslang=False):
         with tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
             root = Path(temporary).resolve()
             (root / 'prod.keys').touch()
@@ -44,6 +47,11 @@ class XcodePipelineTests(unittest.TestCase):
                                       builds=lambda: {'v0': {'display': '1.0.0', 'main': 'other-build'}})
             sources = {key: (False, '') for key in ('glslc_capture', 'vk_capture', 'gl_capture', 'ue_decode', 'oodle_packs', 'ue_legacy')}
             sources['graphics'] = (graphics, 'fixture')
+            sources['gl_capture'] = (graphics == 'gl', 'runtime GLSL')
+            if graphics == 'gl' and not missing_glslang:
+                compiler = root / 'glslangValidator'
+                compiler.touch()
+                compiler.chmod(0o755)
             fam = {'base': base, 'updates': [] if derived else [(327680, update)], 'dlc': []}
             version = 'v0' if derived else 'v327680'
             extraction = root / 'extracted' / version
@@ -55,6 +63,7 @@ class XcodePipelineTests(unittest.TestCase):
 
             mocks = {}
             for name, value in {
+                'tool_env': dict(build.tool_env(), PATH=str(root)), 'capture_shaders': root / 'gl_capture',
                 'scan_nsps': (int(registered.id, 16), fam), 'check_prereqs': None, 'check_metal': None,
                 'free_gb': 10000, 'find_nx_extract': root / 'nx_extract',
                 'extract': extraction, 'check_formats': None, 'can_clone': False, 'build_mismatch': [],
@@ -84,7 +93,12 @@ class XcodePipelineTests(unittest.TestCase):
                                       '--language', 'ja', '--no-show-fps', '--no-motion', '--progress', 'json'])
             finally:
                 progress.close()
-            self.assertEqual(code, 0)
+            if missing_glslang:
+                self.assertEqual(code, 1)
+                self.assertIn('OpenGL shader compilation requires glslangValidator (brew install glslang)', output.getvalue())
+                mocks['capture_shaders'].assert_not_called()
+                return
+            self.assertEqual(code, 0, output.getvalue())
             events = [json.loads(line) for line in output.getvalue().splitlines()]
             self.assertTrue(any(event.get('name') == 'prepare Xcode' for event in events))
             self.assertFalse(any(event.get('name') == 'app build' for event in events))
@@ -96,6 +110,7 @@ class XcodePipelineTests(unittest.TestCase):
             self.assertIn('DM_ENV_FILE', environment)   # --no-motion bakes DM_MOTION=0 into the app's dm/env.txt
             self.assertEqual(Path(environment['DM_ENV_FILE']).read_text(), 'DM_MOTION=0\n')
             self.assertEqual(environment['GFXAPI'], graphics)
+            self.assertEqual(mocks['capture_shaders'].call_count, int(graphics == 'gl'))
             self.assertEqual(environment['DM_BUNDLE_ID'], 'com.example.saved')
             self.assertEqual(environment['DM_TEAM_ID'], 'ABCDEFGHIJ')
             self.assertEqual(Path(environment['DM_XCODE_PROJECT_DIR']), root / f'{registered.id}_build/xcode')

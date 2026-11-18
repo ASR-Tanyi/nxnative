@@ -932,7 +932,6 @@ class LayerShaders(Base):
             lib.parent.mkdir(parents=True); lib.write_bytes(b'library')
             Path(log).write_text('macosx: 1\n'); runs.append(api)
         with mock.patch.object(nsp, 'run', side_effect=translate), mock.patch.object(nsp, 'toolchain', return_value=()), \
-             mock.patch.object(nsp.shutil, 'which', return_value='/glslangValidator'), \
              mock.patch.object(nsp.subprocess, 'run', return_value=mock.Mock(stdout='compiler', stderr='')):
             for api, build in (('vk', nsp.build_vk_shaders), ('gl', nsp.build_gl_shaders)):
                 roots = [self.ex / 'RomFS', cap] + ([self.ex / 'ExeFS/main'] if api == 'gl' else [])

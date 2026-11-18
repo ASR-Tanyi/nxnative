@@ -66,9 +66,11 @@ The shaders are built with Xcode 27.2's Metal compiler. Select it before step 1:
 ```
 xcodebuild -downloadComponent MetalToolchain
 git clone https://github.com/seedds/nxnative.git && cd nxnative
-brew install xcodegen zstd glslang
+brew install xcodegen zstd
 python3 -m pip install lz4 "capstone>=5,<6" fonttools nsz zbic "backports.zstd; python_version < '3.14'"
 ```
+
+For games that use OpenGL, also run `brew install glslang`.
 
 **2. Put your game in a folder**: the game, plus its update and DLC if you have them (`.nsp`, `.xci`, `.nsz` or `.xcz`):
 

@@ -1,6 +1,5 @@
-"""NSP script environment checks (scripts/build_ipa_from_nsp.py), all before the extraction: an iOS build without Xcode's iOS SDK, a shader translator that does not start
-with the .NET it is given, a missing glslangValidator, and a Python under Rosetta each stop the build at once instead of at a shader step minutes later.
-Every input (xcrun, xcode-select, sysctl, the translator, PATH) is mocked: no Xcode, .NET, glslang or Rosetta needed."""
+"""Environment checks that the NSP builder runs before extraction.
+The tests supply the SDK, native translator, Rosetta status and tool search path."""
 import importlib.util
 import os
 from pathlib import Path
@@ -94,8 +93,10 @@ class Prereqs(unittest.TestCase):
         for exc in (OSError('Exec format error'), subprocess.TimeoutExpired('dmsh_xlate', 60)):
             with self.subTest(exc=exc), self.assertRaisesRegex(nsp.BuildError, 'does not start'): self.check(xlate=exc)
 
-    def test_glslang_is_a_prerequisite(self):   # README installs it; an OpenGL game would otherwise stop only after its run-time capture
-        with self.assertRaisesRegex(nsp.BuildError, r'glslangValidator \(brew install glslang\)'): self.check(which=lambda t, **k: None if t == 'glslangValidator' else '/x')
+    def test_shared_prereqs_pass_without_glslang(self):
+        for mac in (True, False):
+            with self.subTest(mac=mac):
+                self.check(mac=mac, which=lambda tool, **kw: None if tool == 'glslangValidator' else '/x')
 
     def test_zbic_is_a_prerequisite(self):   # README installs it; a game with ZBIC modules would otherwise stop only at the rewrite, after its whole RomFS is unpacked (Ocarina of Time: 23 minutes)
         with mock.patch.object(nsp, '_importable', lambda m: m != 'zbic'), self.assertRaisesRegex(nsp.BuildError, r'missing modules: zbic \(pip install .*zbic'):
