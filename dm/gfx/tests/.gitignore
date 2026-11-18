@@ -7,3 +7,6 @@ t_*
 nvn_replay
 .precommit.err
 .precommit_snap/
+# Offline synthetic library for the mac15 backend test
+mtl3_backend.air
+mtl3_backend.metallib

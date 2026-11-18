@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Check prerequisites for the macOS 15 port without an NSP or keys.
+"""Check mac15 prerequisites and the Metal 3 backend core without NSPs or keys.
 
 This is a bring-up diagnostic, not a game build or a declaration of BOTW support.
-It compiles a small Metal 3 program in a temporary directory and checks the
+It compiles synthetic Metal 3 tests in a temporary directory and checks the
 committed native tools. See docs/mac15.md for the remaining renderer work.
 """
 import argparse
@@ -43,9 +43,22 @@ def run(cmd, emit, *, env=None):
     return result.stdout.strip()
 
 
+def metal_check(name, shader, sources, work, emit):
+    target = f'-mmacosx-version-min={MACOS_MIN}'
+    air, library, binary = work / f'{name}.air', work / f'{name}.metallib', work / name
+    run(['xcrun', '--sdk', 'macosx', 'metal', '-c', '-std=metal3.2', '-O1',
+         target, '-fpreserve-invariance', '-fwrapv', shader, '-o', air], emit)
+    run(['xcrun', '--sdk', 'macosx', 'metallib', air, '-o', library], emit)
+    run(['xcrun', '--sdk', 'macosx', 'clang', '-arch', 'arm64', target, '-fobjc-arc',
+         '-Wall', '-Wextra', '-Werror=unguarded-availability', *sources,
+         '-framework', 'Foundation', '-framework', 'Metal', '-o', binary], emit)
+    emit(f'Running {name} with MTL_DEBUG_LAYER=1')
+    run([binary, library], emit, env={**os.environ, 'MTL_DEBUG_LAYER': '1'})
+
+
 def check(repo, emit):
-    emit('mac15 prerequisite check: Apple silicon, macOS 15.6+, Xcode 26.x')
-    emit('This does not build or run BOTW; its Metal 3 renderer is still pending.')
+    emit('mac15 prerequisite and backend core check: Apple silicon, macOS 15.6+, Xcode 26.x')
+    emit('This does not build or run BOTW; NVN replay and game integration are still pending.')
     if platform.system() != 'Darwin':
         raise CheckError('run this check on your Mac; Apple SDKs and a Metal GPU are required')
     if platform.machine() != 'arm64':
@@ -72,22 +85,17 @@ def check(repo, emit):
             raise CheckError(f'{relative} returned no source digest')
     run([repo / 'dm/gfx/tools/spirv_cross_bin/spirv-cross', '--revision'], emit)
 
-    source = repo / 'dm/mac/mac15_probe'
     with tempfile.TemporaryDirectory(prefix='nxnative-mac15-') as folder:
         work = Path(folder)
-        target = f'-mmacosx-version-min={MACOS_MIN}'
-        run(['xcrun', '--sdk', 'macosx', 'metal', '-c', '-std=metal3.2', '-O1',
-             target, '-fpreserve-invariance', '-fwrapv', source.with_suffix('.metal'),
-             '-o', work / 'probe.air'], emit)
-        run(['xcrun', '--sdk', 'macosx', 'metallib', work / 'probe.air',
-             '-o', work / 'probe.metallib'], emit)
-        run(['xcrun', '--sdk', 'macosx', 'clang', '-arch', 'arm64', target, '-fobjc-arc',
-             '-Wall', '-Wextra', '-Werror=unguarded-availability', source.with_suffix('.m'),
-             '-framework', 'Foundation', '-framework', 'Metal', '-o', work / 'probe'], emit)
-        emit('Running the synthetic GPU check with MTL_DEBUG_LAYER=1')
-        run([work / 'probe', work / 'probe.metallib'], emit,
-            env={**os.environ, 'MTL_DEBUG_LAYER': '1'})
-    emit('PASS: prerequisite probes only. BOTW on macOS 15 still needs the Metal 3 backend.')
+        source = repo / 'dm/mac/mac15_probe'
+        metal_check('probe', source.with_suffix('.metal'), [source.with_suffix('.m')], work, emit)
+        tests = repo / 'dm/gfx/tests'
+        run(['xcrun', '--sdk', 'macosx', 'clang', '-arch', 'arm64', f'-mmacosx-version-min={MACOS_MIN}',
+             '-std=c11', '-Wall', '-Wextra', tests / 't_mtl3_range.c', '-o', work / 'range'], emit)
+        run([work / 'range'], emit)
+        metal_check('backend', tests / 'mtl3_backend.metal',
+                    [tests / 't_mtl3_backend.m', repo / 'dm/gfx/nvn/nvn_mtl3.m'], work, emit)
+    emit('PASS: prerequisites and Metal 3 backend core only. NVN replay and BOTW integration are still pending.')
 
 
 def main(argv=None):

@@ -878,3 +878,13 @@ check_t_sparse_pool_cache: RUN_ENV = MTL_DEBUG_LAYER=1
 t_sparse_copy: t_sparse_copy.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_sparse_copy.m $(filter-out ../nvn/hle_nvn.c,$(MTL_T_SRC)) $(FW)
 check_t_sparse_copy: RUN_ENV = MTL_DEBUG_LAYER=1
+
+# Standalone mac15 backend: no profile header, host shaders or Metal 4 replay.
+t_mtl3_range: t_mtl3_range.c ../nvn/nvn_mtl3_range.h
+	$(CC) -std=c11 -O1 -g -Wall -Wextra -o $@ $<
+mtl3_backend.metallib: mtl3_backend.metal
+	xcrun --sdk macosx metal -c -std=metal3.2 -O1 -mmacosx-version-min=15.6 -fpreserve-invariance -fwrapv $< -o mtl3_backend.air
+	xcrun --sdk macosx metallib mtl3_backend.air -o $@
+t_mtl3_backend: t_mtl3_backend.m ../nvn/nvn_mtl3.m ../nvn/nvn_mtl3.h ../nvn/nvn_mtl3_range.h mtl3_backend.metallib
+	clang -arch arm64 -mmacosx-version-min=15.6 -fobjc-arc -Wall -Wextra -Werror=unguarded-availability -o $@ t_mtl3_backend.m ../nvn/nvn_mtl3.m -framework Foundation -framework Metal
+check_t_mtl3_backend: RUN_ENV = MTL_DEBUG_LAYER=1

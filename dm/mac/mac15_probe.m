@@ -16,8 +16,9 @@ int main(int argc, const char *argv[]) {
         if (argc != 2) return fail(@"expected the probe.metallib path");
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         if (!device) return fail(@"no Metal device");
-        printf("GPU: %s; unified memory: %d; BC textures: %d; argument buffers tier: %lu\n",
+        printf("GPU: %s; unified memory: %d; BC textures: %d; argument buffers: Tier %d (enum %lu)\n",
                device.name.UTF8String, device.hasUnifiedMemory, device.supportsBCTextureCompression,
+               device.argumentBuffersSupport == MTLArgumentBuffersTier2 ? 2 : 1,
                (unsigned long)device.argumentBuffersSupport);
         if (!device.hasUnifiedMemory || !device.supportsBCTextureCompression ||
             device.argumentBuffersSupport != MTLArgumentBuffersTier2)

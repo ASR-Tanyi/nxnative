@@ -1,4 +1,4 @@
-"""The mac15 prerequisite check fails promptly and keeps useful diagnostics.
+"""The mac15 checks fail promptly and keep useful diagnostics.
 
 Commands are mocked here; the actual Metal checks must run on an Apple silicon
 Mac with Xcode 26. No game files, Apple SDKs or GPU are needed for these tests.
@@ -40,14 +40,16 @@ class Mac15Check(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 0, output)
         return mock.patch.object(check.subprocess, 'run', side_effect=run)
 
-    def test_success_is_only_a_prerequisite_result_and_uses_no_ios_sdk(self):
+    def test_success_is_only_a_core_result_and_uses_no_ios_sdk(self):
         with self.run_commands():
             check.check(Path('/checkout with spaces'), self.messages.append)
         commands = [cmd for cmd, _ in self.calls]
-        self.assertIn('prerequisite probes only', self.messages[-1])
-        self.assertIn('still needs the Metal 3 backend', self.messages[-1])
+        self.assertIn('prerequisites and Metal 3 backend core only', self.messages[-1])
+        self.assertIn('NVN replay and BOTW integration are still pending', self.messages[-1])
         self.assertFalse(any('iphoneos' in cmd or '-downloadComponent' in cmd for cmd in commands))
         self.assertTrue(any('/checkout with spaces/dm/mac/mac15_probe.m' in cmd for cmd in commands))
+        self.assertTrue(any('/checkout with spaces/dm/gfx/nvn/nvn_mtl3.m' in cmd for cmd in commands))
+        self.assertTrue(any('/checkout with spaces/dm/gfx/tests/t_mtl3_range.c' in cmd for cmd in commands))
         self.assertEqual(self.calls[-1][1]['env']['MTL_DEBUG_LAYER'], '1')
         self.assertFalse(Path(commands[-1][0]).exists())   # temporary build is removed
 
@@ -86,11 +88,20 @@ class Mac15Check(unittest.TestCase):
         self.assertIn('last GPU line', '\n'.join(self.messages))
 
     def test_gpu_failure_is_not_a_pass(self):
-        def failed_probe(cmd, emit, **kwargs):
-            if Path(cmd[0]).name == 'probe': raise check.CheckError('GPU readback differs')
-            return {'sw_vers': '15.6', 'xcodebuild': 'Xcode 26.0'}.get(cmd[0], 'ok')
-        with mock.patch.object(check, 'run', side_effect=failed_probe), self.assertRaisesRegex(check.CheckError, 'readback'):
+        for binary in ('probe', 'range', 'backend'):
+            def failed_probe(cmd, emit, *, failed_binary=binary, **kwargs):
+                if Path(cmd[0]).name == failed_binary: raise check.CheckError('GPU/CPU readback differs')
+                return {'sw_vers': '15.6', 'xcodebuild': 'Xcode 26.0'}.get(cmd[0], 'ok')
+            with self.subTest(binary=binary), mock.patch.object(check, 'run', side_effect=failed_probe), \
+                    self.assertRaisesRegex(check.CheckError, 'readback'):
+                check.check(REPO, self.messages.append)
+            self.assertFalse(any(m.startswith('PASS:') for m in self.messages))
+
+    def test_backend_compile_failure_is_not_a_pass(self):
+        with self.run_commands(fail=str(REPO / 'dm/gfx/nvn/nvn_mtl3.m')), self.assertRaises(check.CheckError):
             check.check(REPO, self.messages.append)
+        self.assertTrue(any(Path(cmd[0]).name == 'probe' for cmd, _ in self.calls))
+        self.assertFalse(any(Path(cmd[0]).name == 'backend' for cmd, _ in self.calls))
         self.assertFalse(any(m.startswith('PASS:') for m in self.messages))
 
     def test_failure_is_written_to_the_requested_log(self):
