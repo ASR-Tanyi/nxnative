@@ -52,6 +52,7 @@ $(MAC15_REPLAY): t_rt_unbind.m $(MTL_T_DEP) Makefile
 .PHONY: mac15_replay check_mac15_replay
 mac15_replay: $(MAC15_REPLAY)
 check_mac15_replay: mac15_replay
+	MTL_DEBUG_LAYER=0 $(MAC15_REPLAY)
 	MTL_DEBUG_LAYER=1 $(MAC15_REPLAY)
 endif
 

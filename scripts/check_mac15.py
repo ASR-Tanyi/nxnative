@@ -51,8 +51,9 @@ def metal_check(name, shader, sources, work, emit):
     run(['xcrun', '--sdk', 'macosx', 'clang', '-arch', 'arm64', target, '-fobjc-arc',
          '-Wall', '-Wextra', '-Werror=unguarded-availability', *sources,
          '-framework', 'Foundation', '-framework', 'Metal', '-o', binary], emit)
-    emit(f'Running {name} with MTL_DEBUG_LAYER=1')
-    run([binary, library], emit, env={**os.environ, 'MTL_DEBUG_LAYER': '1'})
+    for layer in ('0', '1'):
+        emit(f'Running {name} with MTL_DEBUG_LAYER={layer}')
+        run([binary, library], emit, env={**os.environ, 'MTL_DEBUG_LAYER': layer})
 
 
 def check(repo, emit):
@@ -95,7 +96,7 @@ def check(repo, emit):
         metal_check('backend', tests / 'mtl3_backend.metal',
                     [tests / 't_mtl3_backend.m', repo / 'dm/gfx/nvn/nvn_mtl3.m'], work, emit)
     run(['make', '-C', tests, 'GAME=01007EF00011E000', 'DM_MAC15=1', 'check_mac15_replay'],
-        emit, env={**os.environ, 'MTL_DEBUG_LAYER': '1'}, timeout=1200)
+        emit, timeout=1200)
     emit('PASS: prerequisites, Metal 3 backend and NVN replay readback. BOTW gameplay needs a separate NSP run.')
 
 

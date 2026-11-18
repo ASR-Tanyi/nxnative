@@ -550,6 +550,13 @@ Games read this count as a position in their own command memory and size their h
 - **Check:** GPU load from outside: `ioreg -r -d 1 -c IOAccelerator | grep 'Device Utilization'` at 100 % means a shader is looping forever. Find the shaders first used in the last frames (`DM_NVN_PASSDUMP`, compare the `K` keys) and look at their `.metal` for an empty `do {} while (true);` with no `return` (one such case: [Exact program start for the decoder](shaders.md#exact-program-start-for-the-decoder)).
 - **Found on:** no game named in the source (general).
 
+### Metal 3 rejects a shared event at submission
+
+- **Symptom:** shader prewarming finishes, then the window closes with `FATAL Metal 3 signal: invalid event or device` in `cb_commit`.
+- **Cause:** the mac15 backend required every event's `device` to equal the command buffer's device. NVN uses an `MTLSharedEvent` for its submission fence. Metal permits shared events across devices, and their `device` property can be nil. [Metal event synchronization](https://developer.apple.com/documentation/metal/synchronizing-events-across-multiple-devices-or-processes)
+- **Fix:** the Metal 3 backend accepts shared events for GPU waits and signals and checks device ownership for device-local events. The backend and NVN replay fixtures run with Metal API validation off and on.
+- **Found on:** [Breath of the Wild](../../dm/games/01007EF00011E000/README.md) on an M3 Max running macOS 15.7.5.
+
 ### A sync never fenced since its Initialize is signalled
 
 - **Symptom:** `game called nn::diag abort` right after a screen change (PRAGMATA: the Initial Settings menu's Next), with nothing slow before it.

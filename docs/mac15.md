@@ -1,10 +1,9 @@
 # BOTW on macOS 15 with Xcode 26
 
-The `mac15` branch can build an experimental Metal 3 host for original Switch
-Breath of the Wild. The prerequisite and backend core checks passed on an M3
-Max. The production host and NVN replay fixture have been cross-compiled and
-linked for arm64 macOS 15.6. Native replay, BOTW shader compilation and game
-boot are awaiting a run on the target Mac.
+An original Switch Breath of the Wild NSP built on an M3 Max using the
+`mac15` Metal 3 host. The game loaded its shader library and finished
+prewarming. The first reported run aborted when the NVN queue signaled its
+submission fence. The shared-event fix is awaiting a gameplay retest.
 
 ## Build on the target Mac
 
@@ -28,7 +27,7 @@ uses the same `mtl_sub_begin`, `mtl_exec` and `mtl_sub_commit` that BOTW uses.
 It checks clear, draw, texture copy, render-target changes, sampled texture
 handles, and direct and indirect indexed draws. A mixed compute/copy pass
 checks GPU-written bytes after switching native encoders and changing a table
-binding. Metal API validation is enabled.
+binding. The check exercises both the driver and the Metal API validation layer.
 
 Then build with the ordinary NSP command, substituting the paths on your Mac.
 
@@ -83,7 +82,8 @@ with original Switch BOTW NSPs is enabled on Sequoia.
 | Native tools on the Mac | Extractor source `eb660696a669ac76`, translator source `e2d3359d2a182f50`, SPIRV-Cross `vulkan-sdk-1.4.363.0` |
 | Prerequisite and backend core on the Mac | Passed with Metal validation, including 32,400 range cases, two GPU submissions, indirect bindings, draw/blit readbacks, barriers, events, cancellation and completion lifetime |
 | Production host and replay fixture | Cross-compiled and linked on Linux against SDK 26.2 headers and framework stubs. The cross build uses the generator's source-only host shader fallback |
-| Native replay and game | Awaiting the production fixture on the M3 Max, offline game shader build, title screen, input, loaded save, audio, rendered frames and save/reload |
+| BOTW NSP build and launch on the M3 Max | Build succeeded. Prewarming completed with 1,482 shaders, 960 render pipelines and 10 compute pipelines before the shared-event abort. |
+| Gameplay after the shared-event fix | Awaiting native replay readback and a game run reaching the title screen and a playable save. |
 
 The implementation is in [the NVN renderer](../dm/gfx/nvn/nvn_mtl.m),
 [the Metal 3 replay encoders](../dm/gfx/nvn/nvn_mtl3_replay.m) and

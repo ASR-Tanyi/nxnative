@@ -50,7 +50,9 @@ class Mac15Check(unittest.TestCase):
         self.assertTrue(any('/checkout with spaces/dm/mac/mac15_probe.m' in cmd for cmd in commands))
         self.assertTrue(any('/checkout with spaces/dm/gfx/nvn/nvn_mtl3.m' in cmd for cmd in commands))
         self.assertTrue(any('/checkout with spaces/dm/gfx/tests/t_mtl3_range.c' in cmd for cmd in commands))
-        self.assertEqual(self.calls[-1][1]['env']['MTL_DEBUG_LAYER'], '1')
+        for binary in ('probe', 'backend'):
+            layers = [options['env']['MTL_DEBUG_LAYER'] for cmd, options in self.calls if Path(cmd[0]).name == binary]
+            self.assertEqual(layers, ['0', '1'])
         self.assertFalse(Path(commands[-2][0]).exists())   # temporary build is removed
 
     def test_wrong_host_stops_without_launching_any_tools(self):

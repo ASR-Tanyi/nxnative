@@ -335,14 +335,22 @@ static BOOL m3_fail(NSError **error, DmMtl3Error code, NSString *message) {
     [(id<MTLComputeCommandEncoder>)_encoder memoryBarrierWithScope:MTLBarrierScopeBuffers | MTLBarrierScopeTextures];
     return YES;
 }
-- (BOOL)waitForEvent:(id<MTLEvent>)event value:(uint64_t)value error:(NSError **)error {
+- (BOOL)canEncodeEvent:(id<MTLEvent>)event error:(NSError **)error {
     if (![self outsidePass:error]) return NO;
-    if (!event || event.device != _command.device) return m3_fail(error, DmMtl3InvalidArgument, @"invalid event or device");
+    if (!event) return m3_fail(error, DmMtl3InvalidArgument, @"missing Metal event");
+    // MTLEvent.device can be nil for a shared event. Shared events can also
+    // be used on another device when their creator is reported.
+    id<MTLDevice> device = event.device;
+    if (device && device != _command.device && ![event conformsToProtocol:@protocol(MTLSharedEvent)])
+        return m3_fail(error, DmMtl3InvalidArgument, @"device-local Metal event belongs to another device");
+    return YES;
+}
+- (BOOL)waitForEvent:(id<MTLEvent>)event value:(uint64_t)value error:(NSError **)error {
+    if (![self canEncodeEvent:event error:error]) return NO;
     [_command encodeWaitForEvent:event value:value]; [_keep addObject:event]; return YES;
 }
 - (BOOL)signalEvent:(id<MTLEvent>)event value:(uint64_t)value error:(NSError **)error {
-    if (![self outsidePass:error]) return NO;
-    if (!event || event.device != _command.device) return m3_fail(error, DmMtl3InvalidArgument, @"invalid event or device");
+    if (![self canEncodeEvent:event error:error]) return NO;
     [_command encodeSignalEvent:event value:value]; [_keep addObject:event]; return YES;
 }
 - (BOOL)addCompletedHandler:(DmMtl3Completion)handler error:(NSError **)error {

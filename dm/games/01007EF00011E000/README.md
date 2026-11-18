@@ -2,7 +2,7 @@
 
 Update 1.9.0 (v1114112) over the base game, SDK 20.5.22. Nintendo EPD's engine (sead / agl / gsys / ksys, NintendoWare G3d / Ui2d / Vfx / Atk, Havok) on NVN. Modules `main`, `subsdk0` (NintendoSDK_movie) and `sdk`; `subsdk0` and `sdk` are the builds Tears of the Kingdom 1.4.3 runs ([0100F2C0115B6000](../0100F2C0115B6000/README.md)). Plays on the iPhone; 60 fps (30 on the Switch) through the host's frame step. The README lists its IPA at about 16 GB.
 
-On the `mac15` branch, the Metal 3 backend core passed on an M3 Max with macOS 15.7.5 and Xcode 26.3. The production replay and this game build still need a hardware run. [mac15 commands and validation](../../../docs/mac15.md)
+On the `mac15` branch, the NSP build succeeded on an M3 Max with macOS 15.7.5 and Xcode 26.3. The game finished shader prewarming and aborted at its submission fence. The shared-event fix is awaiting a gameplay retest. [mac15 commands and validation](../../../docs/mac15.md)
 
 ## What it needs
 
@@ -223,6 +223,7 @@ Before publishing, the fixes were integrated with main's pipeline archive and GP
 
 ## Found on this game
 
+- The macOS 15 host aborted on its first submission after prewarming. [Metal 3 rejects a shared event at submission](../../../docs/reference/nvn-objects.md#metal-3-rejects-a-shared-event-at-submission)
 - [The split shader tables differ from a game profile's](../../../docs/reference/packing.md#the-split-shader-tables-differ-from-a-game-profiles): the registered 1.9.0 map's duplicate representatives, resolved above.
 - [An argument block points into another arena after a nested allocation](../../../docs/reference/rendering.md#an-argument-block-points-into-another-arena-after-a-nested-allocation): two host bugs reproduced by synthetic GPU tests; the [Zora cutscene retest](#zoras-domain-cutscene-gpu-faults-original-device-retest-pending) passed on baseline and fixed hosts, so the connection to the reported game faults remains unconfirmed.
 - [Two captures of one shader function crash in Metal's binary cache](../../../docs/reference/rendering.md#two-captures-of-one-shader-function-crash-in-metals-binary-cache): resolved in the host; 1.9.0's prebuild crashed once in a `regress.py` run (M4 Pro, macOS 27.2.1).

@@ -1,5 +1,5 @@
 // Tests the Metal 3 submission and binding primitives directly.
-// No game files. scripts/check_mac15.py compiles and runs this with validation.
+// scripts/check_mac15.py runs this on the driver and with Metal API validation.
 #import "../nvn/nvn_mtl3.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -185,7 +185,8 @@ static int lifetime_tests(id<MTLDevice> device) {
     REQUIRE(![cancelled commit:&error]); REQUIRE(![cancelled waitUntilCompleted:0 error:&error]);
     DmMtl3Submission *submission = [queue submissionWithError:&error];
     id<MTLSharedEvent> gate = [device newSharedEvent], signal = [device newSharedEvent];
-    REQUIRE(submission && gate && signal);
+    id<MTLEvent> local = [device newEvent];
+    REQUIRE(submission && gate && signal && local);
     REQUIRE([submission waitForEvent:gate value:1 error:&error]);
     __weak NSObject *weak;
     @autoreleasepool {
@@ -195,8 +196,12 @@ static int lifetime_tests(id<MTLDevice> device) {
     id<MTLBlitCommandEncoder> blit = [submission beginBlit:&error];
     id<MTLBuffer> buffer = [device newBufferWithLength:16 options:MTLResourceStorageModeShared];
     REQUIRE(blit && buffer);
+    REQUIRE(![submission signalEvent:signal value:9 error:&error] && error.code == DmMtl3InvalidState);
+    REQUIRE(![submission waitForEvent:gate value:1 error:&error] && error.code == DmMtl3InvalidState);
+    error = nil;
     [blit fillBuffer:buffer range:NSMakeRange(0, 16) value:0x5a];
     REQUIRE([submission endEncoding:&error]);
+    REQUIRE([submission signalEvent:local value:1 error:&error]);
     REQUIRE([submission signalEvent:signal value:9 error:&error]);
     REQUIRE([submission commit:&error]);
     @autoreleasepool { REQUIRE(weak != nil); }
@@ -206,13 +211,18 @@ static int lifetime_tests(id<MTLDevice> device) {
     REQUIRE([submission waitUntilCompleted:10 error:&error]);
     REQUIRE(signal.signaledValue == 9 && weak == nil);
     for (int i = 0; i < 16; i++) REQUIRE(((uint8_t *)buffer.contents)[i] == 0x5a);
+    DmMtl3Submission *next = [queue submissionWithError:&error];
+    REQUIRE(next && [next waitForEvent:local value:1 error:&error]);
+    REQUIRE([next signalEvent:signal value:10 error:&error]);
+    REQUIRE([next commit:&error] && [next waitUntilCompleted:10 error:&error]);
+    REQUIRE(signal.signaledValue == 10);
     DmMtl3Submission *pending = [queue submissionWithError:&error]; REQUIRE(pending);
     NSError *fault = [NSError errorWithDomain:MTLCommandBufferErrorDomain code:MTLCommandBufferErrorInternal userInfo:nil];
     [queue completedWithError:fault];
     REQUIRE(![pending commit:&error] && error == fault);
     REQUIRE(![queue submissionWithError:&error] && error == fault);
     REQUIRE([pending cancel:&error]);
-    puts("PASS: Metal 3 cancellation, GPU event wait/signal, timeout, completion lifetime and error latch");
+    puts("PASS: Metal 3 cancellation, shared and device-local GPU events, timeout, completion lifetime and error latch");
     return 0;
 }
 
