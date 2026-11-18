@@ -107,33 +107,55 @@ static BOOL m3_fail(NSError **error, DmMtl3Error code, NSString *message) {
         return m3_fail(error, DmMtl3InvalidArgument, @"sampler belongs to another Metal device");
     return YES;
 }
-- (void)applyCompute:(id<MTLComputeCommandEncoder>)encoder keep:(NSHashTable *)keep {
+// Metal borrows these arrays for the duration of set*:. The stage table owns
+// the objects and the submission additionally retains each one it encodes.
+- (void)snapshotBuffers:(id<MTLBuffer> __unsafe_unretained *)buffers
+               textures:(id<MTLTexture> __unsafe_unretained *)textures
+               samplers:(id<MTLSamplerState> __unsafe_unretained *)samplers keep:(NSHashTable *)keep {
     for (NSUInteger i = 0; i < DM_MTL3_BUFFERS; i++) {
-        [encoder setBuffer:_buffers[i] offset:_offsets[i] atIndex:i];
-        if (_buffers[i]) [keep addObject:_buffers[i]];
+        buffers[i] = _buffers[i]; if (buffers[i]) [keep addObject:buffers[i]];
     }
     for (NSUInteger i = 0; i < DM_MTL3_TEXTURES; i++) {
-        [encoder setTexture:_textures[i] atIndex:i]; if (_textures[i]) [keep addObject:_textures[i]];
+        textures[i] = _textures[i]; if (textures[i]) [keep addObject:textures[i]];
     }
     for (NSUInteger i = 0; i < DM_MTL3_SAMPLERS; i++) {
-        [encoder setSamplerState:_samplers[i] atIndex:i]; if (_samplers[i]) [keep addObject:_samplers[i]];
+        samplers[i] = _samplers[i]; if (samplers[i]) [keep addObject:samplers[i]];
     }
 }
+- (void)applyCompute:(id<MTLComputeCommandEncoder>)encoder keep:(NSHashTable *)keep {
+    __unsafe_unretained id<MTLBuffer> buffers[DM_MTL3_BUFFERS];
+    __unsafe_unretained id<MTLTexture> textures[DM_MTL3_TEXTURES];
+    __unsafe_unretained id<MTLSamplerState> samplers[DM_MTL3_SAMPLERS];
+    [self snapshotBuffers:buffers textures:textures samplers:samplers keep:keep];
+    [encoder setBuffers:buffers offsets:_offsets withRange:NSMakeRange(0, DM_MTL3_BUFFERS)];
+    [encoder setTextures:textures withRange:NSMakeRange(0, DM_MTL3_TEXTURES)];
+    [encoder setSamplerStates:samplers withRange:NSMakeRange(0, DM_MTL3_SAMPLERS)];
+}
 - (void)applyRender:(id<MTLRenderCommandEncoder>)encoder stages:(MTLRenderStages)stages keep:(NSHashTable *)keep {
-    for (NSUInteger i = 0; i < DM_MTL3_BUFFERS; i++) {
-        if (stages & MTLRenderStageVertex) [encoder setVertexBuffer:_buffers[i] offset:_offsets[i] atIndex:i];
-        if (stages & MTLRenderStageFragment) [encoder setFragmentBuffer:_buffers[i] offset:_offsets[i] atIndex:i];
-        if (_buffers[i]) [keep addObject:_buffers[i]];
+    __unsafe_unretained id<MTLBuffer> buffers[DM_MTL3_BUFFERS];
+    __unsafe_unretained id<MTLTexture> textures[DM_MTL3_TEXTURES];
+    __unsafe_unretained id<MTLSamplerState> samplers[DM_MTL3_SAMPLERS];
+    [self snapshotBuffers:buffers textures:textures samplers:samplers keep:keep];
+    NSRange br = NSMakeRange(0, DM_MTL3_BUFFERS), tr = NSMakeRange(0, DM_MTL3_TEXTURES), sr = NSMakeRange(0, DM_MTL3_SAMPLERS);
+    if (stages & MTLRenderStageVertex) {
+        [encoder setVertexBuffers:buffers offsets:_offsets withRange:br];
+        [encoder setVertexTextures:textures withRange:tr];
+        [encoder setVertexSamplerStates:samplers withRange:sr];
     }
-    for (NSUInteger i = 0; i < DM_MTL3_TEXTURES; i++) {
-        if (stages & MTLRenderStageVertex) [encoder setVertexTexture:_textures[i] atIndex:i];
-        if (stages & MTLRenderStageFragment) [encoder setFragmentTexture:_textures[i] atIndex:i];
-        if (_textures[i]) [keep addObject:_textures[i]];
+    if (stages & MTLRenderStageFragment) {
+        [encoder setFragmentBuffers:buffers offsets:_offsets withRange:br];
+        [encoder setFragmentTextures:textures withRange:tr];
+        [encoder setFragmentSamplerStates:samplers withRange:sr];
     }
-    for (NSUInteger i = 0; i < DM_MTL3_SAMPLERS; i++) {
-        if (stages & MTLRenderStageVertex) [encoder setVertexSamplerState:_samplers[i] atIndex:i];
-        if (stages & MTLRenderStageFragment) [encoder setFragmentSamplerState:_samplers[i] atIndex:i];
-        if (_samplers[i]) [keep addObject:_samplers[i]];
+    if (stages & MTLRenderStageObject) {
+        [encoder setObjectBuffers:buffers offsets:_offsets withRange:br];
+        [encoder setObjectTextures:textures withRange:tr];
+        [encoder setObjectSamplerStates:samplers withRange:sr];
+    }
+    if (stages & MTLRenderStageMesh) {
+        [encoder setMeshBuffers:buffers offsets:_offsets withRange:br];
+        [encoder setMeshTextures:textures withRange:tr];
+        [encoder setMeshSamplerStates:samplers withRange:sr];
     }
 }
 @end
@@ -154,8 +176,11 @@ static BOOL m3_fail(NSError **error, DmMtl3Error code, NSString *message) {
     uint64_t _serial;
 }
 - (instancetype)initWithDevice:(id<MTLDevice>)device error:(NSError **)error {
+    return [self initWithCommandQueue:[device newCommandQueue] error:error];
+}
+- (instancetype)initWithCommandQueue:(id<MTLCommandQueue>)queue error:(NSError **)error {
     if (!(self = [super init])) return nil;
-    _queue = [device newCommandQueue]; _fence = [device newFence];
+    _queue = queue; _fence = [queue.device newFence];
     if (!_queue || !_fence) { m3_fail(error, DmMtl3AllocationFailed, @"cannot create the Metal 3 queue or fence"); return nil; }
     // Seed the fence before any consumer. Metal evaluates fence dependencies at
     // commit, so independently encoded submissions can later commit in any order.
@@ -202,6 +227,7 @@ static BOOL m3_fail(NSError **error, DmMtl3Error code, NSString *message) {
     DmMtl3Queue *_owner;
     id<MTLCommandBuffer> _command;
     id<MTLFence> _fence;
+    MTLRenderStages _fenceStages;
     id<MTLCommandEncoder> _encoder;
     int _kind;   // 0 none, 1 compute, 2 render, 3 blit
     int _state;  // 0 encoding, 1 committed, 2 cancelled
@@ -213,6 +239,8 @@ static BOOL m3_fail(NSError **error, DmMtl3Error code, NSString *message) {
 - (instancetype)initWithOwner:(DmMtl3Queue *)owner command:(id<MTLCommandBuffer>)command fence:(id<MTLFence>)fence {
     if ((self = [super init])) {
         _owner = owner; _command = command; _fence = fence;
+        _fenceStages = MTLRenderStageVertex | MTLRenderStageFragment;
+        if ([command.device supportsFamily:MTLGPUFamilyApple7]) _fenceStages |= MTLRenderStageObject | MTLRenderStageMesh;
         _keep = [NSHashTable hashTableWithOptions:NSPointerFunctionsStrongMemory | NSPointerFunctionsObjectPointerPersonality];
         _handlers = [NSMutableArray new]; _done = dispatch_group_create();
     }
@@ -238,7 +266,7 @@ static BOOL m3_fail(NSError **error, DmMtl3Error code, NSString *message) {
     if (!pass) { m3_fail(error, DmMtl3InvalidArgument, @"render pass is nil"); return nil; }
     id<MTLRenderCommandEncoder> encoder = [_command renderCommandEncoderWithDescriptor:pass];
     if (!encoder) { m3_fail(error, DmMtl3AllocationFailed, @"cannot create render encoder"); return nil; }
-    [encoder waitForFence:_fence beforeStages:MTLRenderStageVertex | MTLRenderStageFragment];
+    [encoder waitForFence:_fence beforeStages:_fenceStages];
     _encoder = encoder; _kind = 2;
     return encoder;
 }
@@ -252,7 +280,7 @@ static BOOL m3_fail(NSError **error, DmMtl3Error code, NSString *message) {
 - (BOOL)endEncoding:(NSError **)error {
     if (![self encoding:error]) return NO;
     if (_kind == 1) [(id<MTLComputeCommandEncoder>)_encoder updateFence:_fence];
-    else if (_kind == 2) [(id<MTLRenderCommandEncoder>)_encoder updateFence:_fence afterStages:MTLRenderStageVertex | MTLRenderStageFragment];
+    else if (_kind == 2) [(id<MTLRenderCommandEncoder>)_encoder updateFence:_fence afterStages:_fenceStages];
     else if (_kind == 3) [(id<MTLBlitCommandEncoder>)_encoder updateFence:_fence];
     [_encoder endEncoding]; _encoder = nil; _kind = 0;
     return YES;
@@ -267,20 +295,33 @@ static BOOL m3_fail(NSError **error, DmMtl3Error code, NSString *message) {
 - (BOOL)applyRenderBindings:(DmMtl3Bindings *)bindings stages:(MTLRenderStages)stages error:(NSError **)error {
     if (![self encoding:error]) return NO;
     if (_kind != 2 || !bindings) return m3_fail(error, DmMtl3InvalidState, @"render bindings require an active render encoder and table");
-    if (!stages || (stages & ~(MTLRenderStageVertex | MTLRenderStageFragment)))
-        return m3_fail(error, DmMtl3InvalidArgument, @"the Metal 3 binding path currently supports vertex and fragment stages");
+    if (!stages || (stages & ~(MTLRenderStageVertex | MTLRenderStageFragment | MTLRenderStageObject | MTLRenderStageMesh)))
+        return m3_fail(error, DmMtl3InvalidArgument, @"unsupported Metal 3 render binding stages");
     if (![bindings validateDevice:_command.device error:error]) return NO;
     [bindings applyRender:(id)_encoder stages:stages keep:_keep];
     return YES;
 }
 - (BOOL)useResource:(id<MTLResource>)resource usage:(MTLResourceUsage)usage error:(NSError **)error {
     if (![self encoding:error]) return NO;
-    if (!resource || resource.device != _command.device || !usage || (usage & ~(MTLResourceUsageRead | MTLResourceUsageWrite | MTLResourceUsageSample)))
+    if (!resource || resource.device != _command.device || !usage || (usage & ~(MTLResourceUsageRead | MTLResourceUsageWrite)))
         return m3_fail(error, DmMtl3InvalidArgument, @"invalid indirect resource, device or usage");
     if (_kind == 1) [(id<MTLComputeCommandEncoder>)_encoder useResource:resource usage:usage];
     else if (_kind == 2) [(id<MTLRenderCommandEncoder>)_encoder useResource:resource usage:usage stages:MTLRenderStageVertex | MTLRenderStageFragment];
     else return m3_fail(error, DmMtl3InvalidState, @"indirect resources require an active compute or render encoder");
     [_keep addObject:resource];
+    return YES;
+}
+- (BOOL)useResidencySet:(id<MTLResidencySet>)set error:(NSError **)error {
+    if (![self outsidePass:error]) return NO;
+    if (!set || set.device != _command.device) return m3_fail(error, DmMtl3InvalidArgument, @"invalid residency set or device");
+    [_command useResidencySet:set];
+    return YES;
+}
+- (BOOL)presentDrawable:(id<MTLDrawable>)drawable minimumDuration:(CFTimeInterval)duration error:(NSError **)error {
+    if (![self outsidePass:error]) return NO;
+    if (!drawable || !isfinite(duration) || duration < 0) return m3_fail(error, DmMtl3InvalidArgument, @"invalid drawable or duration");
+    if (duration > 0) [_command presentDrawable:drawable afterMinimumDuration:duration];
+    else [_command presentDrawable:drawable];
     return YES;
 }
 - (BOOL)keepAlive:(id)object error:(NSError **)error {

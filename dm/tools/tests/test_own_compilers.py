@@ -38,6 +38,17 @@ class CheckTools(unittest.TestCase):
         with mock.patch.object(own_compilers, 'strict', lambda: list(bad)), mock.patch.dict(os.environ, env, clear=True), redirect_stdout(out):
             return own_compilers.check_tools(), out.getvalue()
 
+    def test_mac15_keeps_the_native_tool_locks(self):
+        with mock.patch.dict(os.environ, {'DM_MAC15': '1'}):
+            self.assertEqual([], self.check([mismatch('metal_macosx', own_compilers.MAC15_METAL)])[0])
+            native = mismatch('spirv-cross', 'different')
+            self.assertEqual([native], self.check([native])[0])
+            with mock.patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'Xcode 26.1', '')):
+                self.assertTrue(own_compilers.mac15_compiler('metal_macosx', OTHER))
+                self.assertFalse(own_compilers.mac15_compiler('metal_iphoneos', OTHER))
+            with mock.patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'Xcode 27.2', '')):
+                self.assertFalse(own_compilers.mac15_compiler('metal_macosx', OTHER))
+
     def test_other_metal_stops(self):
         for key in ('metal_macosx', 'metal_iphoneos'):
             with self.assertRaises(SystemExit) as e: self.check([mismatch(key, OTHER)])

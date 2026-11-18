@@ -1,4 +1,4 @@
-// Tests the actual Metal 3 backend, independently of the Metal 4 NVN replay.
+// Tests the Metal 3 submission and binding primitives directly.
 // No game files. scripts/check_mac15.py compiles and runs this with validation.
 #import "../nvn/nvn_mtl3.h"
 #include <stdint.h>
@@ -109,7 +109,7 @@ static int submission_tests(id<MTLDevice> device, id<MTLLibrary> library) {
     error = nil;
     REQUIRE([consumer applyRenderBindings:fragment stages:MTLRenderStageFragment error:&error]);
     REQUIRE([consumer useResource:values usage:MTLResourceUsageRead error:&error]);
-    REQUIRE([consumer useResource:image usage:MTLResourceUsageRead | MTLResourceUsageSample error:&error]);
+    REQUIRE([consumer useResource:image usage:MTLResourceUsageRead error:&error]);
     REQUIRE([consumer keepAlive:sampler error:&error]);
     [re setRenderPipelineState:render]; [re setViewport:(MTLViewport){0, 0, SIDE, SIDE, 0, 1}];
     [re drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -223,7 +223,7 @@ int main(int argc, const char *argv[]) {
         const char *path = argc > 1 ? argv[1] : "mtl3_backend.metallib";
         id<MTLLibrary> library = [device newLibraryWithURL:[NSURL fileURLWithPath:@(path)] error:&error]; REQUIRE(library);
         if (map_tests(device) || submission_tests(device, library) || lifetime_tests(device)) return 1;
-        puts("PASS: Metal 3 backend core (NVN replay and BOTW integration still pending)");
+        puts("PASS: Metal 3 backend core");
         return 0;
     }
 }

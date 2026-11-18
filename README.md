@@ -41,7 +41,7 @@ Community projects build on nxnative with tools to turn your games into apps for
 
 ## Requirements
 
-**mac15 branch:** the [macOS 15 / BOTW port](docs/mac15.md) is in progress. Prerequisites passed on an M3 Max with macOS 15.7.5; the new Metal 3 submission and binding core has a standalone diagnostic. NVN replay and game integration are pending; BOTW on macOS 15 is not playable yet.
+The `mac15` branch adds an experimental Metal 3 build for original Switch BOTW NSPs on Apple silicon, macOS 15.6+ within Sequoia and Xcode 26.x. The backend core passed on an M3 Max. Native replay and game boot are awaiting verification. [Build and replay check](docs/mac15.md)
 
 - **Mac:** Apple silicon, macOS 26.6 or later. Building games requires Xcode 27.2.
 - **iPhone:** A17 Pro chip or later, with iOS 26 or later.

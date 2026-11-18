@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Check mac15 prerequisites and the Metal 3 backend core without NSPs or keys.
+"""Check mac15 prerequisites, Metal 3 and the production NVN replay without game files.
 
 This is a bring-up diagnostic, not a game build or a declaration of BOTW support.
-It compiles synthetic Metal 3 tests in a temporary directory and checks the
-committed native tools. See docs/mac15.md for the remaining renderer work.
+The NVN fixture submits recorded operations through the host and verifies GPU pixels.
 """
 import argparse
 from contextlib import ExitStack
@@ -23,17 +22,17 @@ class CheckError(Exception):
     pass
 
 
-def run(cmd, emit, *, env=None):
+def run(cmd, emit, *, env=None, timeout=60):
     cmd = [str(p) for p in cmd]
     emit('$ ' + shlex.join(cmd))
     try:
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, errors='replace', timeout=60, env=env)
+                                text=True, errors='replace', timeout=timeout, env=env)
     except subprocess.TimeoutExpired as error:
         output = error.stdout
         if output:
             emit(output.decode(errors='replace') if isinstance(output, bytes) else output)
-        raise CheckError(f'{cmd[0]} timed out after 60 seconds') from error
+        raise CheckError(f'{cmd[0]} timed out after {timeout} seconds') from error
     except OSError as error:
         raise CheckError(f'cannot run {cmd[0]}: {error}') from error
     if result.stdout:
@@ -57,8 +56,8 @@ def metal_check(name, shader, sources, work, emit):
 
 
 def check(repo, emit):
-    emit('mac15 prerequisite and backend core check: Apple silicon, macOS 15.6+, Xcode 26.x')
-    emit('This does not build or run BOTW; NVN replay and game integration are still pending.')
+    emit('mac15 prerequisite, backend and NVN replay check: Apple silicon, macOS 15.6+, Xcode 26.x')
+    emit('The final fixture checks the production NVN replay. BOTW NSP validation is separate.')
     if platform.system() != 'Darwin':
         raise CheckError('run this check on your Mac; Apple SDKs and a Metal GPU are required')
     if platform.machine() != 'arm64':
@@ -95,7 +94,9 @@ def check(repo, emit):
         run([work / 'range'], emit)
         metal_check('backend', tests / 'mtl3_backend.metal',
                     [tests / 't_mtl3_backend.m', repo / 'dm/gfx/nvn/nvn_mtl3.m'], work, emit)
-    emit('PASS: prerequisites and Metal 3 backend core only. NVN replay and BOTW integration are still pending.')
+    run(['make', '-C', tests, 'GAME=01007EF00011E000', 'DM_MAC15=1', 'check_mac15_replay'],
+        emit, env={**os.environ, 'MTL_DEBUG_LAYER': '1'}, timeout=1200)
+    emit('PASS: prerequisites, Metal 3 backend and NVN replay readback. BOTW gameplay needs a separate NSP run.')
 
 
 def main(argv=None):

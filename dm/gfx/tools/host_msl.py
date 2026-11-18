@@ -41,7 +41,7 @@ with tempfile.TemporaryDirectory() as td:
         lib = b''
         if ver:
             ml = os.path.join(td, name + '.metallib')
-            cmd = ['xcrun', '-sdk', a.sdk, 'metal'] + ([f'-m{"ios" if a.sdk == "iphoneos" else "macosx"}-version-min={a.min}'] if a.min else []) + ['-o', ml, src]
+            cmd = ['xcrun', '-sdk', a.sdk, 'metal'] + (['-std=metal3.2'] if a.sdk == 'macosx' and a.min == '15.6' else []) + ([f'-m{"ios" if a.sdk == "iphoneos" else "macosx"}-version-min={a.min}'] if a.min else []) + ['-o', ml, src]
             r = subprocess.run(cmd)
             if r.returncode: sys.exit(f'host_msl.py: {src} does not compile ({" ".join(cmd)})')
             lib = open(ml, 'rb').read()

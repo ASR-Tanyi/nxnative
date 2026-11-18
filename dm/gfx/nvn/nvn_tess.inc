@@ -280,7 +280,7 @@ static void tess_draw(NvProg *pr, const p_draw *dw0, const p_draw_idx *di0) {
     vbuf_prepare(&vs->rf, &range, NULL);
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     g_draw_binst = binst;
-    MTL4RenderPassDescriptor *rd = [MTL4RenderPassDescriptor new]; rd.renderTargetWidth = rd.renderTargetHeight = rd.defaultRasterSampleCount = 1;
+    NvRenderPass *rd = [NvRenderPass new]; rd.renderTargetWidth = rd.renderTargetHeight = rd.defaultRasterSampleCount = 1;
     id<MTL4RenderCommandEncoder> re = enc_r_begin(rd); enc_r_pso(re, cap); bind_vbufs(re, &vs->rf);
     vconv_bind(re, vs, 1, &range, NULL); args_dirty_all(); encode_args(re, vs, 0, 1); enc_r_vbuf(re, 13, g_cap);
     enc_r_draw_instanced(re, MTLPrimitiveTypePoint, lo, span, ni, binst); enc_r_end(re);
@@ -313,7 +313,7 @@ static void tess_draw(NvProg *pr, const p_draw *dw0, const p_draw_idx *di0) {
     swrite_note(pr); g_wr_epoch++; g_mdx_epoch++;
     if (tess_stages() < 3) { g_tess_draws++; return; }
     if (ggs) {   // 4. a geometry shader after the domain: the domain's capture of every listed vertex, the geometry kernel and compaction, the geometry path's draw
-        MTL4RenderPassDescriptor *gd = [MTL4RenderPassDescriptor new]; gd.renderTargetWidth = gd.renderTargetHeight = gd.defaultRasterSampleCount = 1;
+        NvRenderPass *gd = [NvRenderPass new]; gd.renderTargetWidth = gd.renderTargetHeight = gd.defaultRasterSampleCount = 1;
         id<MTL4RenderCommandEncoder> ge = enc_r_begin(gd); enc_r_pso(ge, gj.capture);
         g_draw_binst = binst; args_dirty_all(); encode_args(ge, ds, 4, 1);
         enc_r_vbuf(ge, 13, gj.capture_info); enc_r_vbuf(ge, 14, g_out); enc_r_vbuf(ge, 15, g_par + 16);

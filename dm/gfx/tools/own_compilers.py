@@ -18,7 +18,8 @@ strict = tool_lock.check_tools
 def allowed(): return os.environ.get(ALLOW) == '1'
 
 def metal_version(sdk):   # as tool_lock.tools_now records it: the first line of metal --version, 'missing' without one
-    r = subprocess.run(['xcrun', '-sdk', sdk, 'metal', '--version'], capture_output=True, text=True)
+    try: r = subprocess.run(['xcrun', '-sdk', sdk, 'metal', '--version'], capture_output=True, text=True)
+    except FileNotFoundError: return 'missing'
     return (r.stdout.splitlines() or ['missing'])[0]
 
 def selected_xcode():   # ' (selected: Xcode 27.3 in /Applications/Xcode.app/Contents/Developer)', '' when it cannot be read; both tools follow DEVELOPER_DIR as xcrun does
@@ -31,6 +32,9 @@ def selected_xcode():   # ' (selected: Xcode 27.3 in /Applications/Xcode.app/Con
 def other_metal_message(metal):
     """The stop message for the Metal compilers that differ from the lock: [(lock key, tested, actual)]. Each Xcode downloads and uses its own Metal toolchain (a system asset),
     whatever the macOS version, so with a newer Xcode selected -downloadComponent fetches that Xcode's compiler again: the tested Xcode must be selected first (GitHub issue #717)"""
+    if os.environ.get('DM_MAC15') == '1':
+        actual = ', '.join(now for _, _, now in metal)
+        return f'[RED] mac15 was checked with {MAC15_METAL} in Xcode 26.3. Selected compiler: {actual}. Use --allow-other-metal to try another Xcode 26.x Metal compiler.'
     return ('[RED] this Mac\'s Metal compiler is not the one the shaders were tested with (dm/gfx/tools/dmsh_chain.lock): ' +
             '; '.join(f'{k} {now} (tested: {want})' for k, want, now in metal) +
             f'. Untested compilers are unsupported (GitHub issue #242). The Metal compiler is the selected Xcode\'s{selected_xcode()}: install {XCODE} '
@@ -38,13 +42,23 @@ def other_metal_message(metal):
             f'or DEVELOPER_DIR={XCODE_APP}/Contents/Developer for one build), then download its Metal toolchain (xcodebuild -downloadComponent MetalToolchain), '
             f'or set {ALLOW}=1 (the NSP script\'s --allow-other-metal) to build with this one anyway')
 
+MAC15_METAL = 'Apple metal version 32023.864 (metalfe-32023.864)'
+
+def mac15_compiler(key, version):
+    if os.environ.get('DM_MAC15') != '1' or key != 'metal_macosx': return False
+    if version == MAC15_METAL: return True
+    if not version.startswith('Apple metal version '): return False
+    try: xcode = subprocess.run(['xcodebuild', '-version'], capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError): return False
+    return bool(re.match(r'^Xcode 26(?:\.|\s|$)', xcode))
+
 def other_metal():
     """The Metal compilers (macOS, iOS) that differ from the lock and are present: [(lock key, tested, actual)]; a missing one is dmsh_build.py's to report"""
     with open(dmsh_chain.LOCK) as f: want = dict(l.rstrip('\n').split('\t', 1) for l in f if '\t' in l and not l.startswith('#'))
     out = []
-    for sdk in ('macosx', 'iphoneos'):
+    for sdk in tool_lock.metal_sdks():
         now = metal_version(sdk)
-        if now != 'missing' and now != want.get('metal_' + sdk): out.append(('metal_' + sdk, want.get('metal_' + sdk), now))
+        if now != 'missing' and now != want.get('metal_' + sdk) and not mac15_compiler('metal_' + sdk, now): out.append(('metal_' + sdk, want.get('metal_' + sdk), now))
     return out
 
 def check_metal():   # --check-metal: the stop message, '' when the build may go on
@@ -58,6 +72,9 @@ def check_tools():
     bad, own = [], []
     for b in strict():
         m = OWN.fullmatch(b)
+        if m and mac15_compiler(m[1], m[3]):
+            print(f'mac15 shader compiler: {m[3]} (M3 Max diagnostic: {MAC15_METAL})', flush=True)
+            continue
         if m: own.append((m[1], m[2], m[3]))   # (lock key, tested, actual)
         elif not (b.startswith('metal_iphoneos: ') and b.endswith(' / actual missing') and not ios_target()): bad.append(b)   # a Mac without the iOS platform
     if bad: return bad

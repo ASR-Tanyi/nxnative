@@ -42,7 +42,8 @@ FILES += ['../mac/min_os.mk']   # MAC_MIN below
 # (MAC_METAL below), vk_shaders.py and gl_shaders.py pass this flag on every Mac compile; the iPhone's is ios_metal.py's
 # Read when asked (MAC_MIN, MAC_MIN_FLAG, MAC_METAL below), not at import: an import needs only the inventory (FILES), which pr_areas.py and the tests read without min_os.mk
 def mac_min():
-    with open(os.path.join(GFX, '../mac/min_os.mk')) as f: return f.read().split('MACOS_MIN := ')[1].split()[0]
+    key = 'MAC15_MIN' if os.environ.get('DM_MAC15') == '1' else 'MACOS_MIN'
+    with open(os.path.join(GFX, '../mac/min_os.mk')) as f: return f.read().split(key + ' := ')[1].split()[0]
 # The Mac compile of a game's shaders (dmsh_build.py; the iPhone's is ios_metal.py METAL). It is here, not in dmsh_build.py, which runs a build when imported, so tests compile with it
 # -fpreserve-invariance: vertex positions are marked [[invariant]], but without this flag Metal does not promise that two different shaders compute the same expression to the same value; on Maxwell the same multiply-adds always agree.
 # Super Mario Odyssey draws a depth pre-pass with alRenderDepthOnly, then the G-buffer with another vertex shader and depth test less-or-equal: a hair off and the test failed, leaving those pixels with old content (Cap Kingdom's ground in 32x32 blocks)
@@ -54,7 +55,7 @@ def mac_min():
 # so the lightmap / probe UV's x came out far too large and models drawn with mesh shaders took their ambient light from the wrong texels (the bright band on the Deku Tree's walls).
 # The flag also drops inbounds from pointer arithmetic (Metal's clang has no -fwrapv-pointer) and keeps loop bounds that may wrap (test_dmsh_wrapv.py)
 # -mmacosx-version-min: the deployment target, above
-def mac_metal(): return ['xcrun', '-sdk', 'macosx', 'metal', '-c', '-O1', f'-mmacosx-version-min={mac_min()}', '-fpreserve-invariance', '-fwrapv']
+def mac_metal(): return ['xcrun', '-sdk', 'macosx', 'metal', '-c', *(['-std=metal3.2'] if os.environ.get('DM_MAC15') == '1' else []), '-O1', f'-mmacosx-version-min={mac_min()}', '-fpreserve-invariance', '-fwrapv']
 def __getattr__(name) -> Any:   # MAC_MIN, MAC_MIN_FLAG and MAC_METAL as the module's constants (PEP 562), each read from min_os.mk when used
     if name == 'MAC_MIN': return mac_min()
     if name == 'MAC_MIN_FLAG': return f'-mmacosx-version-min={mac_min()}'

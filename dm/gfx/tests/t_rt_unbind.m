@@ -134,10 +134,67 @@ static void handles(tex_t *t) {
     g_samples_fb_left=0; CHECK(draw_samples_rt(pr),"slice merge retains the conservative handle guard");
     t->mem=NULL; mtl_pool_del(mem); free(mem);
 }
+#if DM_MAC15
+static void indexed_replay(prog_t *program, tex_t *target) {
+    void *memory = NULL;
+    if (posix_memalign(&memory, getpagesize(), getpagesize())) abort();
+    memset(memory, 0, getpagesize());
+    uint8_t *data = memory;
+    const uint16_t indices[] = {0, 1, 2};
+    const MTLDrawIndexedPrimitivesIndirectArguments args = {.indexCount=3, .instanceCount=1};
+    memcpy(data + 64, indices, sizeof indices);
+    memcpy(data + 128, &args, sizeof args);
+    mtl_pool_add(memory, getpagesize());
+    for (int indirect = 0; indirect < 2; indirect++) {
+        chain c = {0};
+        p_set_rt rt = {.n=1}; rt.color[0] = target;
+        p_clear_color green = {0, 15, {0, 1, 0, 1}};
+        p_bind_program bind = {program, 3};
+        p_draw_idx draw = {.prim=NVN_DRAW_PRIMITIVE_TRIANGLES, .itype=NVN_INDEX_TYPE_UNSIGNED_SHORT,
+            .count=3, .instances=1, .ibuf=(uintptr_t)(data + 64), .ind=indirect ? (uintptr_t)(data + 128) : 0};
+        emit(&c, OP_SET_RT, &rt, sizeof rt);
+        emit(&c, OP_CLEAR_COLOR, &green, sizeof green);
+        emit(&c, OP_BIND_PROGRAM, &bind, sizeof bind);
+        emit(&c, OP_DRAW_IDX, &draw, sizeof draw);
+        run(&c);
+        pixels(target, 255, 0, indirect ? "GPU indirect indexed draw" : "direct indexed draw");
+    }
+    mtl_pool_del(memory); free(memory);
+}
+
+static void compute_copy_replay(id<MTLLibrary> lib) {
+    NSError *error = nil;
+    id<MTLComputePipelineState> ps = [g_dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"increment"] error:&error];
+    id<MTLBuffer> buf = [g_dev newBufferWithLength:256 options:MTLResourceStorageModeShared | MTLResourceHazardTrackingModeUntracked];
+    CHECK(ps && buf, "mixed replay resources allocate");
+    if (!ps || !buf) return;
+    uint32_t *words = buf.contents;
+    memset(words, 0, buf.length); words[15] = 0x12345678;
+    const MTLDispatchThreadgroupsIndirectArguments args = {{1, 1, 1}};
+    memcpy(words + 8, &args, sizeof args);
+    res_add(buf);
+    mtl_sub_begin();
+    id<MTL4ComputeCommandEncoder> e = enc_c_begin(nil);
+    [e setComputePipelineState:ps];
+    [g_ct setAddress:buf.gpuAddress + 64 atIndex:0];
+    [e fillBuffer:buf range:NSMakeRange(64, 4) value:1];
+    [e dispatchThreadgroupsWithIndirectBuffer:buf.gpuAddress + 32 threadsPerThreadgroup:MTLSizeMake(1,1,1)];
+    [e copyFromBuffer:buf sourceOffset:64 toBuffer:buf destinationOffset:96 size:4];
+    [g_ct setAddress:buf.gpuAddress + 96 atIndex:0];
+    [e dispatchThreadgroups:MTLSizeMake(1,1,1) threadsPerThreadgroup:MTLSizeMake(1,1,1)];
+    [e copyFromBuffer:buf sourceOffset:96 toBuffer:buf destinationOffset:128 size:4];
+    enc_c_end(e); mtl_sub_commit(); mtl_drain();
+    CHECK(!mtl_last_commit_error(), "mixed compute and blit submission completes");
+    CHECK(words[15] == 0x12345678 && words[16] == 0x01010104 && words[24] == 0x01010107 && words[32] == words[24],
+          "GPU readback after fill, indirect dispatch, copy, table rebind, direct dispatch and copy");
+    [g_ct setAddress:0 atIndex:0]; res_remove(buf); res_commit();
+}
+#endif
+
 int main(void) { @autoreleasepool {
     alarm(60); setvbuf(stdout,NULL,_IONBF,0); mtl_init();
     NSError *error=nil;
-    id<MTLLibrary> lib=[g_dev newLibraryWithSource:@"#include <metal_stdlib>\nusing namespace metal;\nvertex float4 v(uint i [[vertex_id]]) { float2 p[3]={float2(-1,-1),float2(3,-1),float2(-1,3)}; return float4(p[i],0,1); }\nfragment float4 red() { return float4(1,0,0,1); }\nfragment float4 green() { return float4(0,1,0,1); }\nstruct A { texture2d<float,access::read> source [[id(0)]]; };\nfragment float4 read_tex(float4 p [[position]], constant A &a [[buffer(0)]]) { return a.source.read(uint2(p.xy)); }\n" options:nil error:&error];
+    id<MTLLibrary> lib=[g_dev newLibraryWithSource:@"#include <metal_stdlib>\nusing namespace metal;\nvertex float4 v(uint i [[vertex_id]]) { float2 p[3]={float2(-1,-1),float2(3,-1),float2(-1,3)}; return float4(p[i],0,1); }\nfragment float4 red() { return float4(1,0,0,1); }\nfragment float4 green() { return float4(0,1,0,1); }\nkernel void increment(device uint *p [[buffer(0)]]) { p[0] += 3; }\nstruct A { texture2d<float,access::read> source [[id(0)]]; };\nfragment float4 read_tex(float4 p [[position]], constant A &a [[buffer(0)]]) { return a.source.read(uint2(p.xy)); }\n" options:nil error:&error];
     if (!lib) { fprintf(stderr,"%s\n",error.localizedDescription.UTF8String); return 2; }
     prog_t pg={.serial=882000}; NvProg *pr=[NvProg new]; pr->sh[0]=[NvShader new]; pr->sh[1]=[NvShader new];
     pr->sh[0]->fn=[lib newFunctionWithName:@"v"]; pr->sh[0]->stage=0;
@@ -146,6 +203,10 @@ int main(void) { @autoreleasepool {
     gp->sh[1]->fn=[lib newFunctionWithName:@"green"]; gp->sh[1]->stage=1; gp->sh[1]->rf.color_known=1; gp->sh[1]->rf.color_mask=1; serial_put(green_pg.serial,gp);
     tex_t t=texture(882001), cp=texture(882004); identity(&t); replay(&pg,&green_pg,&t,&cp);
     replay_handles(&pg,&green_pg,lib,pr->sh[0],&t,&cp); handles(&t);
+#if DM_MAC15
+    indexed_replay(&pg, &t);
+    compute_copy_replay(lib);
+#endif
     mtl_tex_release(&t); mtl_tex_release(&cp);
     printf("render target unbind: %d checks, %d failed\n",checks,failed); return failed!=0;
 } }

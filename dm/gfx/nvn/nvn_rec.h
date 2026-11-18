@@ -102,6 +102,9 @@ typedef struct rec_blk { struct rec_blk *next; int n; rec_t r[REC_BLK]; } rec_bl
 // On by default on iOS: Breath of the Wild on an iPhone 17 Pro Max (handheld, the Great Plateau) took about 8 ms of submit thread per frame without it and 3.3–4.5 ms with it
 static int g_rec = -1;
 static inline int rec_on(void) {
+#if DM_MAC15
+    return 0;   // BOTW uses direct replay on this target
+#endif
     if (__builtin_expect(g_rec >= 0, 1)) return g_rec;
     const char *e = getenv("DM_NVN_ENC_THREAD");
 #if TARGET_OS_IPHONE
@@ -488,7 +491,7 @@ static inline id rec_table_real(id t) { return [t isKindOfClass:[DmRecTable clas
 @end
 
 // The replay's entry points
-static id rec_cb_new(void) { if (!rec_on()) return [g_dev newCommandBuffer]; rec_put(RO_CB_NEW, 0); return [DmRecCB new]; }
+static id rec_cb_new(void) { if (!rec_on()) return nv_command(); rec_put(RO_CB_NEW, 0); return [DmRecCB new]; }
 // Work a framework encodes itself (MetalFX's scalers) needs the real command buffer: on the encoding thread, in order with the recorded encoders
 static void rec_cb_block(id cb, void (^block)(id<MTL4CommandBuffer>)) {
     if ([cb isKindOfClass:[DmRecCB class]]) rec_put(RO_CB_BLOCK, 1)->a[0] = rec_obj([block copy]);
@@ -499,14 +502,12 @@ static id rec_table(id t) { if (!rec_on() || !t) return t; DmRecTable *s = [DmRe
 static void rec_commit(id cb, DmCommitFB *fb, int end) {   // end: the submission ends with this command buffer (the encode thread may keep it open for the next one: merged submissions)
     if ([cb isKindOfClass:[DmRecCB class]]) { rec_t *r = rec_put(RO_COMMIT, 1); r->a[0] = rec_obj(fb); r->a[2] = ubc_head(); r->a[5] = (uint64_t)end; return; }
     ubc_wait(ubc_head());
-    id<MTL4CommandBuffer> buffers[] = {cb}; MTL4CommitOptions *o = commit_opts(fb);
-    if (o) [g_q4 commit:buffers count:1 options:o]; else [g_q4 commit:buffers count:1];
+    nv_commit(cb, commit_opts(fb));
 }
 // An upload batch: its place in the queue is after what is recorded so far (it reads no uniform shadow)
-static void rec_commit_upload(id cb, MTL4CommitOptions *o) {
+static void rec_commit_upload(id cb, NvCommitOptions *o) {
     if (rec_on() && g_rb_started) { rec_t *r = rec_put(RO_COMMIT_REAL, 2); r->a[0] = rec_obj(o); r->a[1] = rec_obj(cb); return; }
-    id<MTL4CommandBuffer> buffers[] = {cb};
-    if (o) [g_q4 commit:buffers count:1 options:o]; else [g_q4 commit:buffers count:1];
+    nv_commit(cb, o);
 }
 // A queue operation (a sparse texture's mapping update, nvn_mtl.m sparse_*): on the encoding thread in its place among the recorded commits, so it reaches the queue before the upload batch
 // committed after it and after the command buffers committed before it

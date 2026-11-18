@@ -46,6 +46,7 @@ import shader_cache   # the compile cache as one file, read in place
 import vol_space   # the space a build may write, with what APFS frees on demand
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pack_dump   # a folder of a game's files instead of NSPs
+import platform as host_platform
 import pack_nup   # a game in a NUP container instead of NSPs
 
 # ---- Settings ----
@@ -1709,6 +1710,22 @@ def decoder_host_key(host):
     return None
 
 
+def mac15_target(platform, version, dump, xcode_version):
+    """Select the Sequoia BOTW port only on an actual 15.x Mac."""
+    if version.split('.')[:1] != ['15']: return False
+    if tuple(map(int, version.split('.')[:2])) < (15, 6): raise BuildError('the mac15 target requires macOS 15.6 or later')
+    if platform != 'mac' or dump: raise BuildError('macOS 15 supports the original Switch BOTW NSP with --platform mac')
+    if not re.match(r'^Xcode 26(?:\.|$)', xcode_version().partition('\n')[0]):
+        raise BuildError('the mac15 target requires Xcode 26.x selected with xcode-select or DEVELOPER_DIR')
+    return True
+
+
+def mac15_packages(app, fam):
+    paths = [fam['base'], *(p for _, p in fam['updates']), *(p for _, _, p in fam['dlc'])]
+    if app != 0x01007EF00011E000 or not paths[0] or any(Path(p).suffix.lower() != '.nsp' for p in paths):
+        raise BuildError('macOS 15 supports the original Switch BOTW base NSP (01007EF00011E000) and its update and DLC NSPs')
+
+
 def build_mac_host(repo, out, env, logs, g):
     """The Mac host for the profile, built into out: dm/host's per-game host (make gen/<id>/dmhost: one object per source on every core, kept for the next build) copied with its dSYM,
     since make takes no target path with spaces and dm/host/dmhost may be another build's.
@@ -1716,15 +1733,20 @@ def build_mac_host(repo, out, env, logs, g):
     and the macOS SDK) are as at the last build into out. The host runs the game's own arm64 code natively, so an Intel Mac stops here (GitHub issue #54)"""
     if not apple_silicon(): raise BuildError('this step boots the game in the Mac host, which runs the game\'s own arm64 code natively: it needs a Mac with Apple silicon, and this Mac has an Intel processor')
     host = repo / 'dm/host'
-    run(['make', '-s', f'GAME={g.id}', f'gen/{g.id}/game_profile.h', 'gen/vpx/libvpx.a', 'gen/dav1d/libdav1d.a', 'host_msl'], logs / 'mac_host_make.log', env=env, cwd=host)
-    built = host / f'gen/{g.id}/dmhost'
-    dry = subprocess.run(['make', '-n', '-B', f'GAME={g.id}', f'gen/{g.id}/dmhost'], env=env, cwd=host, capture_output=True, text=True)
-    cmd = [l for l in dry.stdout.splitlines() if l.startswith('clang') and f' -o gen/{g.id}/' in l]   # the host's compiles and its link, not the libraries'
-    if not any(f' -o gen/{g.id}/dmhost ' in l for l in cmd): raise BuildError(f'make -n gave no link line for the Mac host: {dry.stderr.strip()[-500:]}')
+    gen, cc = 'gen', ['clang']
+    if env.get('DM_MAC15') == '1':
+        root = subprocess.run(['make', '-s', f'GAME={g.id}', 'print-gen'], cwd=host, env=env, capture_output=True, text=True)
+        gen, cc = root.stdout.strip(), ['xcrun', '--sdk', 'macosx', 'clang']
+        if root.returncode or not re.fullmatch(r'gen/mac15/[0-9a-f]{16}', gen): raise BuildError(f'cannot determine the mac15 build directory: {root.stderr.strip()}')
+    run(['make', '-s', f'GAME={g.id}', f'{gen}/{g.id}/game_profile.h', f'{gen}/vpx/libvpx.a', f'{gen}/dav1d/libdav1d.a', 'host_msl'], logs / 'mac_host_make.log', env=env, cwd=host)
+    built = host / f'{gen}/{g.id}/dmhost'
+    dry = subprocess.run(['make', '-n', '-B', f'GAME={g.id}', f'{gen}/{g.id}/dmhost'], env=env, cwd=host, capture_output=True, text=True)
+    cmd = [l for l in dry.stdout.splitlines() if l.startswith(' '.join(cc) + ' ') and f' -o {gen}/{g.id}/' in l]   # the host's compiles and its link, not the libraries'
+    if not any(f' -o {gen}/{g.id}/dmhost ' in l for l in cmd): raise BuildError(f'make -n gave no link line for the Mac host: {dry.stderr.strip()[-500:]}')
     kf, tp = out.with_name(out.name + '.key'), repo / 'dm/third_party'
     srcs = [p for d in HOST_DIRS for p in sorted((repo / d).iterdir()) if p.is_file() and p.suffix in ('.c', '.m', '.h', '.S', '.inc')]
-    common = fingerprint(cmd, ('files', [host / f'gen/{g.id}/game_profile.h', host / 'gen/msl-macosx/host_msl_gen.h', host / 'gen/vpx/libvpx.a', host / 'gen/dav1d/libdav1d.a', tp / 'stb_vorbis/stb_vorbis.c']),
-                         ('tree', tp / 'vulkan-headers/include'), ('tree', tp / 'libvpx/vpx'), ('tree', tp / 'dav1d/include'), ('cmd', ['clang', '--version']), ('cmd', ['xcrun', '--show-sdk-build-version']), env=env)
+    common = fingerprint(cmd, ('files', [host / f'{gen}/{g.id}/game_profile.h', host / f'{gen}/msl-macosx/host_msl_gen.h', host / f'{gen}/vpx/libvpx.a', host / f'{gen}/dav1d/libdav1d.a', tp / 'stb_vorbis/stb_vorbis.c']),
+                         ('tree', tp / 'vulkan-headers/include'), ('tree', tp / 'libvpx/vpx'), ('tree', tp / 'dav1d/include'), ('cmd', cc + ['--version']), ('cmd', ['xcrun', '--show-sdk-build-version']), env=env)
     key = fingerprint(common, ('files', srcs))
     chain = repo / CHAIN_H
     # The decoder serves game bytes before rendering. DMSH_CHAIN selects translated shader libraries and appears in the startup log; it cannot change decompression.
@@ -1733,7 +1755,7 @@ def build_mac_host(repo, out, env, logs, g):
     decoder = fingerprint('oodle-host-v1', common, ('files', [p for p in srcs if p != chain]), chain_text)
     if out.is_file() and reused(kf, key) is not None and decoder_host_key(out) == decoder: return out
     rmtree(kf); out.parent.mkdir(parents=True, exist_ok=True)
-    run(['make', '-s', f'GAME={g.id}', f'gen/{g.id}/dmhost'], logs / 'mac_host_build.log', env=env, cwd=host)
+    run(['make', '-s', f'GAME={g.id}', f'{gen}/{g.id}/dmhost'], logs / 'mac_host_build.log', env=env, cwd=host)
     part, dsym = out.with_name(out.name + '.partial'), Path(f'{out}.dSYM')
     shutil.copy2(built, part); os.replace(part, out)
     rmtree(dsym)
@@ -2452,8 +2474,9 @@ def spirv_cross(repo, env=None):   # resolve the same selection the shader tools
 
 
 def toolchain(repo, env=None):   # Metal is a separate Xcode download: its version and SDK must invalidate reuse too
+    sdks = ('macosx',) if env and env.get('DM_MAC15') == '1' else ('macosx', 'iphoneos')
     return (('cmd', ['xcodebuild', '-version']), ('files', [spirv_cross(repo, env)]),
-            *(('cmd', ['xcrun', '-sdk', sdk, *args]) for sdk in ('macosx', 'iphoneos')
+            *(('cmd', ['xcrun', '-sdk', sdk, *args]) for sdk in sdks
               for args in (['metal', '--version'], ['metallib', '--version'], ['--show-sdk-version'], ['--show-sdk-build-version'])))
 
 
@@ -2575,7 +2598,7 @@ def build_shaders(py, repo, sh, xlate, env, logs, g, pkg_key=None, mac=False, se
     if pkg_key:
         PROG.set(step='checking the inputs')
         key = fingerprint(pkg_key, ('files', chain_files(repo)), translator_key(xlate), shader_profile_key(py, repo, env, g), ('files', [pso_pairs]), *toolchain(repo, env),
-                          {k: env.get(k) for k in ('XLATE_DEBUG', 'XLATE_REDUCED')}, *((seen,) if seen else ()), env=env)
+                          {k: env.get(k) for k in ('XLATE_DEBUG', 'XLATE_REDUCED', 'DM_MAC15')}, *((seen,) if seen else ()), env=env)
         note = next((n for k in ((kmac,) if seen else (kmac, kf) if mac else (kf,)) if (n := reused(k, key)) is not None), None)
         # the libraries are the last build's, so are tables that name their stamp; a missing or stale one is made from that build's Mac outputs, and without them the step runs again
         lost_pull = pull and not mac and not seen and shader_lib.left_out_pulling(libs)   # includes an image built before pulling libraries were kept by default
@@ -2826,7 +2849,7 @@ def mac_run(work, game, patched, host, font, msl, aoc, gfx, lang, env, logs, g, 
     if PROGRAM_INDEX and g.get('program_of', ''): renv['DM_PROGRAM'] = PROGRAM_INDEX   # the host over the application's programs runs this one (main.c dm_game_cur)
     renv.update(DM_LANG=lang, DM_WINDOW=1, DM_AUDIO=1)
     if env_file: renv.update(env_file_pairs(env_file))
-    if gfx == 'nvn' and g.table('shader_pairs.tsv').is_file():
+    if gfx == 'nvn' and env.get('DM_MAC15') != '1' and g.table('shader_pairs.tsv').is_file():
         if not g.table('pso_pairs.tsv').is_file() and (work / 'shader/pso_pairs.tsv').is_file(): renv['DM_PSO_PAIRS'] = work / 'shader/pso_pairs.tsv'   # split_shaders' copy
         # The pipeline prebuild (docs/development.md, Hybrid pipelines): the pulling base of every shader pair into run/pso_archive, so the first run's draws have stand-ins instead
         # of waiting for the Metal compiler. The host's tool mode skips it when pso_archive/prebuilt.tsv matches (chain version, depth mode, pair list): Breath of the Wild's
@@ -3262,6 +3285,14 @@ def main(args=None):
     want_lang = language_code(lang_in) if lang_in else 'en-US'
     if not want_lang: raise BuildError(f'unknown game language {lang_in!r}; give one of {language_list([c for c, _ in nacp.LANGUAGES])}, by code or by name')
     env = tool_env()
+    env.pop('DM_MAC15', None)
+    def selected_xcode():
+        try: return subprocess.run(['xcodebuild', '-version'], env=env, capture_output=True, text=True, check=True).stdout
+        except (OSError, subprocess.CalledProcessError) as e: raise BuildError(f'cannot identify the selected Xcode: {e}') from e
+    mac15 = mac15_target(platform, host_platform.mac_ver()[0], dump, selected_xcode)
+    if mac15:
+        env['DM_MAC15'] = '1'
+        say('mac15: original Switch BOTW, Metal 3, deployment target macOS 15.6')
     env.setdefault('USER', getpass.getuser())   # xcodegen fails without USER (Couldn't find current username)
     env.setdefault('J', str(os.cpu_count() or 8))   # shader_split.py's and dmsh_build.py's workers (their default is 8)
     py = sys.executable
@@ -3281,6 +3312,7 @@ def main(args=None):
     else:
         with package_reader(repo, keys, env) as packages:
             app, fam = scan_nsps(nsp_dir, packages.contents, int(want, 16) if want else None)
+            if mac15: mac15_packages(app + PROGRAM_INDEX, fam)
             packages.check_keys(fam)
         if PROGRAM_INDEX:   # one program of a multi-program application, packed as a game of its own: its title ID names the profile and the build folder
             app += PROGRAM_INDEX; say(f'program {PROGRAM_INDEX} of the application: title ID {app:016X}')
@@ -3327,7 +3359,9 @@ def main(args=None):
         if alias and not derived: derived = f'title {app:016X} is not game profile {g.id}\'s title {g.title_id:016X}'
         if derived: say(f'{derived}: packing {pkg_ver} from a profile derived from it')
     versions = [pkg_ver] if derived else need + ([pkg_ver] if pkg_ver not in need else [])
-    work = build_folder(args, nsp_dir, g.id); BUILD_FOLDERS.add(work)
+    work = build_folder(args, nsp_dir, g.id)
+    if mac15: work /= 'mac15'   # the printed run command keeps its host, shaders and saves across switches of backend
+    BUILD_FOLDERS.add(work)
     out_ipa = Path(os.path.expanduser(args.out or OUT_IPA)).resolve() if (args.out or OUT_IPA) else work.parent / g.get('ipa')   # by default next to the build folder (the NSP folder, beside the NSPs and <id>_build/, unless --work-dir moved it)
     if shadowed and not (args.out or OUT_IPA): out_ipa = out_ipa.with_name(out_ipa.stem + '-provisional.ipa')   # never over the IPA of the game's real profile
     if mac_pack and (args.out or OUT_IPA) and out_ipa.suffix != '.app': raise BuildError(f'the Mac app (-o / OUT_IPA) must end in .app: {out_ipa}')

@@ -1,4 +1,5 @@
 #import "nvn_deswizzle_gpu.h"
+#import "../nvn/nvn_mtl3_replay.h"
 #import "../nvn/host_msl.h"
 
 static id<MTLComputePipelineState> g_nvn_deswz_pipeline, g_nvn_deswz_direct;
@@ -39,7 +40,7 @@ int nvn_deswz_gpu_direct_m4(id<MTL4ComputeCommandEncoder> enc, id<MTL4ArgumentTa
         src_off,base,layout.layer_size,MAX(d->width>>level,1u),MAX(d->height>>level,1u),layout.layers,level,th,MAX(nvn_tex_level_gobs(d,level),(row+63u)/64u),(uint32_t)nvn_gob_switch2};
     memcpy((uint8_t*)params.contents+params_off,&p,sizeof p);
     [enc setArgumentTable:table];[enc setComputePipelineState:g_nvn_deswz_direct];
-    [table setAddress:src.gpuAddress atIndex:0];[table setAddress:params.gpuAddress+params_off atIndex:2];[table setTexture:view.gpuResourceID atIndex:0];
+    [table setAddress:src.gpuAddress atIndex:0];[table setAddress:params.gpuAddress+params_off atIndex:2];nvn_table_texture(table, view, 0);
     [enc dispatchThreadgroups:MTLSizeMake((p.width+7)/8,(p.height+3)/4,p.layers) threadsPerThreadgroup:MTLSizeMake(8,4,1)];
     return 0;
 }

@@ -7,10 +7,15 @@ $(error GAME is not set: make GAME=<base game title ID>: $(shell python3 ../../g
 endif
 endif
 GAME_DIR = ../../games/$(GAME)
-GAME_H = ../../host/gen/$(GAME)/game_profile.h
+include ../../mac/min_os.mk
+TEST_GEN = ../../host/gen
+ifeq ($(DM_MAC15),1)
+TEST_GEN := ../../host/$(shell $(MAKE) --no-print-directory -s -C ../../host GAME=$(GAME) DM_MAC15=1 print-gen)
+endif
+GAME_H = $(TEST_GEN)/$(GAME)/game_profile.h
 
 # The host's shaders compiled for the Mac (host_msl_gen.h, made by the host Makefile from dm/gfx/msl; nvn/host_msl.m loads them)
-MSL_H = ../../host/gen/msl-macosx/host_msl_gen.h
+MSL_H = $(TEST_GEN)/msl-macosx/host_msl_gen.h
 CFLAGS=-O1 -g -Wall -Wno-unused-function -I../nvn/include -I$(dir $(GAME_H)) -I$(dir $(MSL_H))
 GFX=$(filter-out ../nvn/hle_nvn.c,$(sort $(wildcard ../nvn/*.c ../nvn/*.m ../nvn/*.S ../tex/*.c ../tex/*.m)))
 GFX_H=$(wildcard ../nvn/*.h ../nvn/*.inc ../nvn/include/*.h ../tex/*.h) ../../host/hle.h ../../host/registration.h $(GAME_H) $(MSL_H)
@@ -37,6 +42,19 @@ t_registration_asan: $(REGISTRATION_DEP)
 .PHONY: registration-asan
 registration-asan: t_registration_asan
 	ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./t_registration_asan
+# Exercise the production NVN command decoder and Metal 3 backend with exact GPU readbacks.
+# Keep the binary and host headers apart from the Metal 4 test build.
+ifeq ($(DM_MAC15),1)
+MAC15_REPLAY = $(TEST_GEN)/$(GAME)/t_rt_unbind
+$(MAC15_REPLAY): t_rt_unbind.m $(MTL_T_DEP) Makefile
+	xcrun --sdk macosx clang $(filter-out -g,$(CFLAGS)) -arch arm64 -mmacosx-version-min=$(MAC15_MIN) -DDM_MAC15=1 -fobjc-arc -o $@.partial t_rt_unbind.m $(MTL_T_SRC) $(FW) -lcompression
+	mv $@.partial $@
+.PHONY: mac15_replay check_mac15_replay
+mac15_replay: $(MAC15_REPLAY)
+check_mac15_replay: mac15_replay
+	MTL_DEBUG_LAYER=1 $(MAC15_REPLAY)
+endif
+
 t_rt_unbind: t_rt_unbind.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_rt_unbind.m $(MTL_T_SRC) $(FW)
 .PHONY: check_t_rt_unbind

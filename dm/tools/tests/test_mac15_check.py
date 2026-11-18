@@ -40,18 +40,18 @@ class Mac15Check(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 0, output)
         return mock.patch.object(check.subprocess, 'run', side_effect=run)
 
-    def test_success_is_only_a_core_result_and_uses_no_ios_sdk(self):
+    def test_success_requires_replay_and_uses_no_ios_sdk(self):
         with self.run_commands():
             check.check(Path('/checkout with spaces'), self.messages.append)
         commands = [cmd for cmd, _ in self.calls]
-        self.assertIn('prerequisites and Metal 3 backend core only', self.messages[-1])
-        self.assertIn('NVN replay and BOTW integration are still pending', self.messages[-1])
+        self.assertIn('Metal 3 backend and NVN replay readback', self.messages[-1])
+        self.assertIn('check_mac15_replay', commands[-1])
         self.assertFalse(any('iphoneos' in cmd or '-downloadComponent' in cmd for cmd in commands))
         self.assertTrue(any('/checkout with spaces/dm/mac/mac15_probe.m' in cmd for cmd in commands))
         self.assertTrue(any('/checkout with spaces/dm/gfx/nvn/nvn_mtl3.m' in cmd for cmd in commands))
         self.assertTrue(any('/checkout with spaces/dm/gfx/tests/t_mtl3_range.c' in cmd for cmd in commands))
         self.assertEqual(self.calls[-1][1]['env']['MTL_DEBUG_LAYER'], '1')
-        self.assertFalse(Path(commands[-1][0]).exists())   # temporary build is removed
+        self.assertFalse(Path(commands[-2][0]).exists())   # temporary build is removed
 
     def test_wrong_host_stops_without_launching_any_tools(self):
         for system, machine in [('Linux', 'aarch64'), ('Darwin', 'x86_64')]:
@@ -96,6 +96,11 @@ class Mac15Check(unittest.TestCase):
                     self.assertRaisesRegex(check.CheckError, 'readback'):
                 check.check(REPO, self.messages.append)
             self.assertFalse(any(m.startswith('PASS:') for m in self.messages))
+
+    def test_production_replay_failure_is_not_a_pass(self):
+        with self.run_commands(fail='check_mac15_replay'), self.assertRaises(check.CheckError):
+            check.check(REPO, self.messages.append)
+        self.assertFalse(any(m.startswith('PASS:') for m in self.messages))
 
     def test_backend_compile_failure_is_not_a_pass(self):
         with self.run_commands(fail=str(REPO / 'dm/gfx/nvn/nvn_mtl3.m')), self.assertRaises(check.CheckError):

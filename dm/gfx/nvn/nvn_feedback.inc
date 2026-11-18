@@ -191,7 +191,7 @@ static void tf_draw(NvProg *pr,const p_draw *dw,const p_draw_idx *di) {
     vbuf_prepare(vs?&vs->rf:NULL,dw,NULL);   // a copy or a conversion it makes ends the open capture pass (tf_pass_end where the encoders begin)
     if(!g_tf_enc) {
         if(g_blit){enc_b_end(g_blit);g_blit=nil;}
-        MTL4RenderPassDescriptor *rd=[MTL4RenderPassDescriptor new];rd.renderTargetWidth=rd.renderTargetHeight=rd.defaultRasterSampleCount=1;
+        NvRenderPass *rd=[NvRenderPass new];rd.renderTargetWidth=rd.renderTargetHeight=rd.defaultRasterSampleCount=1;
         g_tf_enc=enc_r_begin(rd);g_tf_npass++;
     }
     id<MTL4RenderCommandEncoder> en=g_tf_enc;enc_r_pso(en,ps);
@@ -211,7 +211,7 @@ static void tf_geometry(NvShader *reader,uint64_t indices,uint64_t args,uint32_t
     id<MTLRenderPipelineState> ps=tf_pso(reader);if(!ps)return;
     uint64_t dst[4]={0};uint64_t job=tf_prepare(reader,args,indices,0,primitive,0,0,base_instance,dst);if(!job)return;
     tf_pass_end();
-    MTL4RenderPassDescriptor *rd=[MTL4RenderPassDescriptor new];rd.renderTargetWidth=rd.renderTargetHeight=rd.defaultRasterSampleCount=1;
+    NvRenderPass *rd=[NvRenderPass new];rd.renderTargetWidth=rd.renderTargetHeight=rd.defaultRasterSampleCount=1;
     id<MTL4RenderCommandEncoder> en=enc_r_begin(rd);enc_r_pso(en,ps);args_dirty_all();encode_args(en,reader,0,1);enc_r_vbuf(en,14,job);
     for(int b=0;b<4;b++)if(reader->tf_stride[b])enc_r_vbuf(en,TF_SLOT+b,dst[b]);
     enc_r_draw_indirect(en,MTLPrimitiveTypePoint,job+16);enc_r_end(en);tf_note(reader);

@@ -19,6 +19,22 @@ CHAIN, INPUTS = '0123456789ab', 'aaaaaaaaaaaa'
 LIVE, OLD, NEW = 'a' * 64, 'b' * 64, 'c' * 64
 
 
+class Mac15Selection(unittest.TestCase):
+    def test_original_switch_nsp_and_xcode(self):
+        self.assertTrue(nsp.mac15_target('mac', '15.7.5', None, lambda: 'Xcode 26.3\nBuild version 17C529'))
+        self.assertFalse(nsp.mac15_target('mac', '26.6', None, lambda: self.fail('unexpected Xcode probe')))
+        for target, os_version, fmt, xcode in [('mac-app', '15.7', None, '26.3'), ('ios', '15.6', None, '26.0'),
+                                              ('mac', '15.5', None, '26.0'), ('mac', '15.7', 'nup', '26.3'),
+                                              ('mac', '15.6', None, '27.0'), ('mac', '15.6', None, '')]:
+            with self.subTest(target=target, version=os_version, format=fmt, xcode=xcode), self.assertRaises(nsp.BuildError):
+                nsp.mac15_target(target, os_version, fmt, lambda v=xcode: f'Xcode {v}')
+        fam = {'base': Path('base.NSP'), 'updates': [(1, Path('update.nsp'))], 'dlc': [(2, 3, Path('dlc.nsp'))]}
+        botw = 0x01007EF00011E000
+        nsp.mac15_packages(botw, fam)
+        for app, packages in [(botw + 1, fam), (botw, dict(fam, base=None)), (botw, dict(fam, updates=[(1, Path('game.nsz'))]))]:
+            with self.assertRaises(nsp.BuildError): nsp.mac15_packages(app, packages)
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, self.tmp)

@@ -10,6 +10,9 @@ from dmsh_chain import LOCK, XLATE_DIR, SPIRV_CROSS, xlate_source_sha
 
 def sha16(p): return hashlib.sha256(open(p, 'rb').read()).hexdigest()[:16]
 
+def metal_sdks():
+    return ('macosx',) if os.environ.get('DM_MAC15') == '1' else ('macosx', 'iphoneos')
+
 def tools_now():
     """Actual tool fingerprints: the translator (a native executable that holds the Ryujinx shader library), spirv-cross, metal compiler (macOS / iOS)"""
     xl = os.path.join(XLATE_DIR, 'dmsh_xlate')
@@ -17,7 +20,7 @@ def tools_now():
     t['xlate_source'] = xlate_embedded()
     sc = shutil.which(SPIRV_CROSS)
     t['spirv-cross'] = sha16(sc) if sc else 'missing'
-    for sdk in ('macosx', 'iphoneos'):
+    for sdk in metal_sdks():
         t['metal_' + sdk] = subprocess.run(['xcrun', '-sdk', sdk, 'metal', '--version'], capture_output=True, text=True).stdout.splitlines()[0:1] or ['missing']
         t['metal_' + sdk] = t['metal_' + sdk][0]
     return t
@@ -44,6 +47,7 @@ def check_tools():
 if __name__ == '__main__':
     a = sys.argv[1:]
     if a == ['--update-lock']:
+        if os.environ.get('DM_MAC15') == '1': sys.exit('use the reference toolchain to update the shared lock')
         t = tools_now()
         if t['xlate_source'].startswith(NO_RUN): sys.exit('[RED] ' + no_run_message(t['xlate_source']))
         if t['xlate_source'] != xlate_source_sha(): sys.exit(f'[RED] the translator was not built from the in-repo source (embedded {t["xlate_source"]} / in repo {xlate_source_sha()}): rebuild it first (dm/tools/native_tools.sh dmsh_xlate)')

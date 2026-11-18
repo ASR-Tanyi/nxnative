@@ -1,5 +1,4 @@
-// Metal 3 execution primitives for the mac15 port. The NVN replay is not wired
-// to them yet. No MTL4 types or runtime calls; compile with ARC, macOS 15.6+.
+// Metal 3 execution primitives for the mac15 NVN renderer. Compile with ARC.
 #pragma once
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -42,6 +41,7 @@ typedef void (^DmMtl3Completion)(uint64_t serial, MTLCommandBufferStatus status,
 // Fences conservatively order every pass, including untracked/aliased resources.
 // A GPU failure latches on the queue: subsequent submissions fail explicitly.
 @interface DmMtl3Queue : NSObject
+- (nullable instancetype)initWithCommandQueue:(id<MTLCommandQueue>)queue error:(NSError * _Nullable * _Nullable)error;
 - (nullable instancetype)initWithDevice:(id<MTLDevice>)device error:(NSError * _Nullable * _Nullable)error;
 - (instancetype)init NS_UNAVAILABLE;
 - (nullable DmMtl3Submission *)submissionWithError:(NSError * _Nullable * _Nullable)error;
@@ -61,6 +61,8 @@ typedef void (^DmMtl3Completion)(uint64_t serial, MTLCommandBufferStatus status,
 // Resources inside an argument buffer are not discovered by Metal. Declare
 // every indirectly used resource per pass; retain indirect samplers separately.
 - (BOOL)useResource:(id<MTLResource>)resource usage:(MTLResourceUsage)usage error:(NSError * _Nullable * _Nullable)error;
+- (BOOL)useResidencySet:(id<MTLResidencySet>)set error:(NSError * _Nullable * _Nullable)error;
+- (BOOL)presentDrawable:(id<MTLDrawable>)drawable minimumDuration:(CFTimeInterval)duration error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)keepAlive:(id)object error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)computeBarrier:(NSError * _Nullable * _Nullable)error;
 // Events require no active encoder. They are real GPU waits/signals, not CPU
