@@ -1,7 +1,7 @@
 // Mac front end: with DM_WINDOW=1 open a window (CAMetalLayer, for the graphics backend to present frames) + keyboard and controllers → dm_input; the guest runs on a large-stack thread instead and the main thread belongs to AppKit.
 // Without DM_WINDOW: the guest runs directly on the current thread, behaving the same as with no front end (windowless tests use this).
 // The window is fullscreen-capable (the green button and ⌃⌘F); DM_FULLSCREEN=1 starts it that way. ⌘Q quits, and so does a controller's Home button held for 2 s and
-// confirmed with A (home_quit.h); the left mouse button is the touchscreen.
+// confirmed with A (home_quit.h). A left click touches the screen. Controls > Mouse Look switches the pointer to the right stick and the clicks to Switch buttons.
 // Cheats (hle_cheats.c): the Cheats menu's rows toggle, reload (⌘R) and open the cheats folder; its first item "Show Cheats
 // Window" (⌘⇧C, or DM_CHEATS_WINDOW=1 at launch) opens a Cheats panel beside the game: sections, search, the master switch,
 // safe mode, values, details and the import of cheat files (see the code below).
@@ -15,6 +15,7 @@
 #import <GameController/GameController.h>
 #include "dm.h"
 #include "dm_input.h"
+#include "mouse_look.h"
 #include "front.h"
 #include "hle.h"
 #include "pad_slots.h"
@@ -34,6 +35,7 @@ static void merge_rumble_to(void (*sink)(const dm_haptic_state *));
 #include "ctrl_prompt.h"
 #include "user_select_mac.h"
 #include <signal.h>
+#include <stdatomic.h>
 #include <math.h>
 #include <sys/stat.h>
 
@@ -42,6 +44,11 @@ static uint64_t g_btn;
 static int g_w, g_a, g_s, g_d;
 static int g_rl, g_ru, g_rr, g_rd;   // arrow keys pressed with Shift held: the right stick (each goes back up as it went down, whatever Shift does meanwhile)
 static int g_input_on = 1;   // main thread: the game window is key, so its keyboard, mouse and controllers reach the game (input_release / input_resume)
+static mouse_look g_mouse_look;
+static uint64_t g_mouse_bindings[MOUSE_BUTTONS];
+static double g_mouse_sensitivity = 1.0;
+static NSTimer *g_mouse_timer;   // active only while the pointer is captured
+static void mouse_look_release(void);
 
 void *front_metal_layer(void) { return (__bridge void *)g_layer; }
 static _Atomic int g_screen_fps;   // the window's screen's maximumFramesPerSecond, kept up to date when the window moves to another screen
@@ -139,14 +146,16 @@ void front_screen_match(int fps) {
 // The pointer hides on game input while it is over the picture of the active game window (issue #675): AppKit shows it again when the mouse moves, input_release when
 // the window loses focus. The title bar, other windows and other apps keep theirs; the mouse is the touch screen (DmGameView), and moving it shows the pointer
 static void cursor_hide_for_input(void) {
-    if (!g_win.isKeyWindow || !NSApp.isActive) return;
+    if (g_mouse_timer || !g_win.isKeyWindow || !NSApp.isActive) return;
     NSView *v = g_win.contentView;
     if (NSPointInRect([v convertPoint:g_win.mouseLocationOutsideOfEventStream fromView:nil], v.bounds)) [NSCursor setHiddenUntilMouseMoves:YES];
 }
 static void push(void) {
     int32_t lx = (g_d - g_a) * 32767, ly = (g_w - g_s) * 32767;
     int32_t rx = (g_rr - g_rl) * 32767, ry = (g_ru - g_rd) * 32767;
-    dm_input_set(g_btn, lx, ly, rx, ry);
+    uint64_t buttons = g_btn;
+    mouse_look_merge(&g_mouse_look, &buttons, &rx, &ry);
+    dm_input_set(buttons, lx, ly, rx, ry);
 }
 static int key_bit(unsigned short code) {
     switch (code) {
@@ -346,6 +355,7 @@ static void pads_reread(void) {
 static void hq_close(void);
 static void input_release(void) {
     hq_close();   // the prompt or the hold indicator, if one is up: the Games app the system opens for Home takes the focus too
+    mouse_look_release();
     [NSCursor setHiddenUntilMouseMoves:NO];
     display_awake(0);
     g_input_on = 0;
@@ -424,7 +434,7 @@ static void merge_rumble_to(void (*sink)(const dm_haptic_state *)) {
     if (!g_merge || g_merge_sink == sink) return;
     g_merge_sink = sink; dm_haptics_apple_set_sink(0, sink);
 }
-static int s2pad_blocked(void) { return !g_input_on || hq_blocks_input(g_hq.phase) || cp_blocks_input(g_cp.phase); }   // no input to the game (focus lost, the Home or controller prompt up): its Joy-Con states are not sent (pad_switch2_apple.m)
+static int game_input_blocked(void) { return !g_input_on || hq_blocks_input(g_hq.phase) || cp_blocks_input(g_cp.phase); }
 static void s2pad_read(s2_pad *d) {
     hq_poll();   // Home and the prompt's A and B come from these pads too
     if (!g_input_on || hq_blocks_input(g_hq.phase)) return;
@@ -464,7 +474,7 @@ static void s2pad_detach(s2_pad *d) {   // d is already off g_s2pads
 // Original Joy-Cons read from their HID reports (pad_jc1_mac.h): a pad is one Joy-Con or a left and a right one, a player from its first button press as a raw HID pad
 // (hidpad_first_press: with or without DM_PAD_PRESS_TO_JOIN), whose rumble goes to the Joy-Cons themselves
 static int jc1pad_player(jc1_pad *d) { return g_merge ? 0 : pad_slot_of(&g_slots, d); }
-static int jc1pad_blocked(void) { return s2pad_blocked(); }
+static int jc1pad_blocked(void) { return game_input_blocked(); }
 static void jc1pad_read(jc1_pad *d) {
     hq_poll();   // Home and the prompt's A and B come from these pads too
     if (!g_input_on || hq_blocks_input(g_hq.phase)) return;
@@ -555,6 +565,7 @@ static void hq_changed(hq_phase was, hq_phase now, GCController *holder) {
         g_hq_timer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60 repeats:YES block:^(NSTimer *t) { (void)t; hq_poll(); }];
         break;
     case HQ_PROMPT: {
+        mouse_look_release();
         pads_release();   // nothing the game held stays pressed while the prompt has the controllers
         if (g_mouse_down) { g_mouse_down = 0; dm_touch_set(NULL, 0); }
         dm_focus_set(2);
@@ -651,6 +662,7 @@ int front_ctrl_support(int min, int max) {
     if (!g_layer) return -1;
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_main_queue(), ^{
+        mouse_look_release();
         g_btn = 0; g_w = g_a = g_s = g_d = 0; g_rl = g_ru = g_rr = g_rd = 0; push();   // nothing the game held stays pressed while the prompt has the input
         if (g_mouse_down) { g_mouse_down = 0; dm_touch_set(NULL, 0); }
         pads_release();
@@ -677,27 +689,155 @@ static void pads_start(void) {
     dm_motion_pro_start(pro_devices_changed);
     dm_jc1_start(g_merge);
     hidpad_start();
-    static const dm_switch2_front s2front = {s2pad_attach, s2pad_detach, s2pad_read, s2pad_player, s2pad_blocked};
+    static const dm_switch2_front s2front = {s2pad_attach, s2pad_detach, s2pad_read, s2pad_player, game_input_blocked};
     dm_switch2_start(&s2front);
 }
 
-// Mouse as a single-point touchscreen (front.h dm_touch_set): left button down / drag = finger 0, release = lifted. The content view takes the clicks,
-// not a window-wide event monitor, so clicks on the title bar, the window buttons and the resize edges still reach AppKit.
+// Only a captured pointer drives the camera. Ordinary clicks in the content view still touch the Switch screen.
+int front_web_touch(void);   // web_apple.m: a visible web applet owns the pointer
+static BOOL mouse_look_available(void) {
+    return !game_input_blocked() && g_win.isKeyWindow && NSApp.isActive && !g_text_box && !front_web_touch();
+}
+static _Atomic int g_cursor_detached;   // the guest can call exit() from its own thread
+static BOOL g_accepted_mouse_moves;
+static void mouse_cursor_restore(void) {
+    if (!atomic_exchange(&g_cursor_detached, 0)) return;
+    CGAssociateMouseAndMouseCursorPosition(true);
+    CGDisplayShowCursor(kCGNullDirectDisplay);
+}
+static void mouse_look_release(void) {
+    if (!g_mouse_timer) return;
+    [g_mouse_timer invalidate]; g_mouse_timer = nil;
+    g_win.acceptsMouseMovedEvents = g_accepted_mouse_moves;
+    mouse_cursor_restore();
+    g_mouse_look = (mouse_look){0};
+    push();
+}
+static BOOL g_ignore_warp_delta;
+static void mouse_look_capture(void) {
+    if (g_mouse_timer || !mouse_look_available()) return;
+    // Keep clicks over the game even when capture was selected from the menu bar or another screen.
+    NSView *view = g_win.contentView;
+    NSPoint pointer = [view convertPoint:g_win.mouseLocationOutsideOfEventStream fromView:nil];
+    g_ignore_warp_delta = !NSPointInRect(pointer, NSInsetRect(view.bounds, 2, 2));
+    if (g_ignore_warp_delta) {
+        NSPoint middle = [view convertPoint:NSMakePoint(NSMidX(view.bounds), NSMidY(view.bounds)) toView:nil];
+        NSPoint p = [g_win convertPointToScreen:middle];
+        if (CGWarpMouseCursorPosition(CGPointMake(p.x, NSMaxY(NSScreen.screens.firstObject.frame) - p.y)) != kCGErrorSuccess) {
+            LOG("[RED] mouse look could not move the pointer into the game window"); return;
+        }
+    }
+    if (CGAssociateMouseAndMouseCursorPosition(false) != kCGErrorSuccess) { LOG("[RED] mouse look could not capture the pointer"); return; }
+    [NSCursor setHiddenUntilMouseMoves:NO];
+    if (CGDisplayHideCursor(kCGNullDirectDisplay) != kCGErrorSuccess) {
+        CGAssociateMouseAndMouseCursorPosition(true); LOG("[RED] mouse look could not hide the pointer"); return;
+    }
+    g_cursor_detached = 1;
+    if (g_mouse_down) { g_mouse_down = 0; dm_touch_set(NULL, 0); }
+    g_accepted_mouse_moves = g_win.acceptsMouseMovedEvents; g_win.acceptsMouseMovedEvents = YES;
+    const double interval = 1.0 / 60;
+    g_mouse_look = (mouse_look){.last_time = CACurrentMediaTime(), .last_interval = interval};
+    g_mouse_timer = [NSTimer timerWithTimeInterval:interval repeats:YES block:^(NSTimer *t) {
+        (void)t;
+        if (!mouse_look_available()) { mouse_look_release(); return; }
+        if (mouse_look_sample(&g_mouse_look, CACurrentMediaTime(), g_mouse_sensitivity)) push();
+    }];
+    [NSRunLoop.mainRunLoop addTimer:g_mouse_timer forMode:NSRunLoopCommonModes];
+}
+static BOOL mouse_look_event(NSEvent *e) {
+    if (!g_mouse_timer) return NO;
+    if (!mouse_look_available()) { mouse_look_release(); return NO; }
+    switch (e.type) {
+    case NSEventTypeMouseMoved: case NSEventTypeLeftMouseDragged: case NSEventTypeRightMouseDragged: case NSEventTypeOtherMouseDragged:
+        if (g_ignore_warp_delta) g_ignore_warp_delta = NO;   // the first motion after a warp can include its distance
+        else { g_mouse_look.dx += e.deltaX; g_mouse_look.dy += e.deltaY; }
+        return YES;
+    case NSEventTypeLeftMouseDown: case NSEventTypeRightMouseDown: case NSEventTypeOtherMouseDown:
+    case NSEventTypeLeftMouseUp: case NSEventTypeRightMouseUp: case NSEventTypeOtherMouseUp: {
+        if ((NSUInteger)e.buttonNumber >= MOUSE_BUTTONS) return NO;
+        BOOL down = e.type == NSEventTypeLeftMouseDown || e.type == NSEventTypeRightMouseDown || e.type == NSEventTypeOtherMouseDown;
+        mouse_look_click(&g_mouse_look, (unsigned)e.buttonNumber, down, (e.modifierFlags & NSEventModifierFlagOption) != 0,
+                         (e.modifierFlags & NSEventModifierFlagControl) != 0, g_mouse_bindings);
+        push(); return YES;
+    }
+    default: return NO;
+    }
+}
+
 // The picture's width / height (front.h front_picture_shape; 16:9 until the first present), which the present fits into the view
 static _Atomic double g_picture_aspect = 16.0 / 9.0;
 void front_picture_shape(int w, int h) { if (w > 0 && h > 0) g_picture_aspect = (double)w / h; }
-@interface DmGameView : NSView @end
-@implementation DmGameView
-- (void)mouseDown:(NSEvent *)e { [self mouseDragged:e]; }
+@interface DmGameView : NSView <NSMenuItemValidation>
+- (NSMenu *)controlsMenu;
+@end
+@implementation DmGameView {
+    NSUserDefaults *_mousePrefs;
+}
+- (void)toggleMouseLook:(id)sender {
+    (void)sender;
+    if (g_mouse_timer) mouse_look_release(); else mouse_look_capture();
+}
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action != @selector(toggleMouseLook:)) return YES;
+    item.state = g_mouse_timer ? NSControlStateValueOn : NSControlStateValueOff;
+    return mouse_look_available();
+}
+- (void)applyMouseChoice:(NSMenuItem *)item {
+    NSInteger group = item.parentItem.tag;
+    if (group == MOUSE_BUTTONS) g_mouse_sensitivity = item.tag / 100.0;
+    else g_mouse_bindings[group] = (uint64_t)item.tag;
+    for (NSMenuItem *choice in item.menu.itemArray) choice.state = choice == item ? NSControlStateValueOn : NSControlStateValueOff;
+}
+- (void)chooseMouseSetting:(NSMenuItem *)item {
+    mouse_look_release();   // a button can still be held under its old binding
+    [self applyMouseChoice:item];
+    [_mousePrefs setInteger:item.tag forKey:item.parentItem.representedObject];
+}
+- (NSMenu *)controlsMenu {
+    _mousePrefs = [[NSUserDefaults alloc] initWithSuiteName:[@"org.nxnative.mouse." stringByAppendingString:@(DM_GAME_ID)]];
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Controls"];
+    NSMenuItem *toggle = [menu addItemWithTitle:@"Mouse Look" action:@selector(toggleMouseLook:) keyEquivalent:@"m"];
+    toggle.target = self; toggle.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [menu addItem:NSMenuItem.separatorItem];
+    // Group tags use AppKit's button numbers. The last group stores the sensitivity as a percentage.
+    const struct { NSInteger group; NSString *title, *pref; NSInteger initial; } settings[] = {
+        {MOUSE_LEFT, @"Left Click", @"left", DM_BTN_Y}, {MOUSE_MIDDLE, @"Middle Click", @"middle", DM_BTN_RS},
+        {MOUSE_RIGHT, @"Right Click", @"right", DM_BTN_ZR}, {MOUSE_BUTTONS, @"Camera Sensitivity", @"sensitivity", 100},
+    };
+    for (size_t i = 0; i < sizeof settings / sizeof settings[0]; i++) {
+        NSMenuItem *parent = [menu addItemWithTitle:settings[i].title action:nil keyEquivalent:@""];
+        parent.tag = settings[i].group; parent.representedObject = settings[i].pref;
+        NSMenu *sub = parent.submenu = [[NSMenu alloc] initWithTitle:settings[i].title];
+        if (parent.tag == MOUSE_BUTTONS) {
+            for (NSNumber *percent in @[@50, @100, @200]) {
+                NSMenuItem *choice = [sub addItemWithTitle:[percent.stringValue stringByAppendingString:@"%"] action:@selector(chooseMouseSetting:) keyEquivalent:@""];
+                choice.tag = percent.integerValue; choice.target = self;
+            }
+        } else {
+            for (int bit = -1; bit < 16; bit++) {
+                NSMenuItem *choice = [sub addItemWithTitle:bit < 0 ? @"None" : @(pad_hid_names[bit]) action:@selector(chooseMouseSetting:) keyEquivalent:@""];
+                choice.tag = bit < 0 ? 0 : 1 << bit; choice.target = self;
+            }
+        }
+        NSNumber *saved = [_mousePrefs objectForKey:settings[i].pref];
+        NSMenuItem *choice = [saved isKindOfClass:NSNumber.class] ? [sub itemWithTag:saved.integerValue] : nil;
+        [self applyMouseChoice:choice ?: [sub itemWithTag:settings[i].initial]];
+    }
+    return menu;
+}
+- (void)mouseDown:(NSEvent *)e {
+    if (game_input_blocked()) return;
+    g_mouse_down = 1; [self mouseDragged:e];
+}
 - (void)mouseDragged:(NSEvent *)e {
-    if (!g_input_on) return;
+    if (!g_mouse_down) return;   // releasing capture or losing focus during a drag cannot start a touchscreen press
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil]; NSSize b = self.bounds.size;
     double w = b.width, h = b.height;
     if (w <= 0 || h <= 0) return;
     double a = g_picture_aspect; if (w / h > a) w = h * a; else h = w / a;   // the centered picture the present fits into the view (16:9, or a taller one under DM_SCREEN_ASPECT)
     double x0 = (b.width - w) / 2, y0 = (b.height - h) / 2;
     dm_touch t = {0, (float)fmin(fmax((p.x - x0) / w, 0), 0.999), (float)fmin(fmax(1 - (p.y - y0) / h, 0), 0.999)};   // The AppKit view origin is at bottom left, the touchscreen origin is at top left
-    dm_touch_set(&t, 1); g_mouse_down = 1;
+    dm_touch_set(&t, 1);
 }
 - (void)mouseUp:(NSEvent *)e { (void)e; if (g_mouse_down) { g_mouse_down = 0; dm_touch_set(NULL, 0); } }
 // The drawable follows the view in pixels: a layer assigned to a layer-backed view kept the drawable at the first window's 1280x720 in fullscreen too, so the game picture was
@@ -1615,6 +1755,8 @@ void front_run(void (*guest)(void)) {
         NSMenu *bar = [NSMenu new], *app = [NSMenu new], *wm = [[NSMenu alloc] initWithTitle:@"Window"];
         [[bar addItemWithTitle:@"" action:nil keyEquivalent:@""] setSubmenu:app];
         [app addItemWithTitle:[@"Quit " stringByAppendingString:@(DM_GAME_NAME)] action:@selector(terminate:) keyEquivalent:@"q"];
+        [[bar addItemWithTitle:@"Controls" action:nil keyEquivalent:@""] setSubmenu:[(DmGameView *)v controlsMenu]];
+        atexit(mouse_cursor_restore);
         // Cheats (hle_cheats.c): the rows rebuild on every open through the delegate, the same rows the file reload changes
         g_cheats_menu = [DmCheatsMenuDelegate new];
         NSMenu *cm = [[NSMenu alloc] initWithTitle:@"Cheats"];
@@ -1664,18 +1806,25 @@ void front_run(void (*guest)(void)) {
                 if (conn) hq_log_setting(); }];
         dm_haptics_apple_init();
         pads_start();
-        [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp handler:^NSEvent *(NSEvent *e) {
-            if (e.window != win) return e;   // Only swallow keys for the game window; other windows such as the software keyboard input box receive typing as usual
+        NSEventMask mouseEvents = NSEventMaskMouseMoved | NSEventMaskLeftMouseDragged | NSEventMaskRightMouseDragged | NSEventMaskOtherMouseDragged |
+            NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp | NSEventMaskRightMouseDown | NSEventMaskRightMouseUp | NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp;
+        [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp | mouseEvents handler:^NSEvent *(NSEvent *e) {
+            if (e.window != win) return e;
+            if (e.type != NSEventTypeKeyDown && e.type != NSEventTypeKeyUp) return mouse_look_event(e) ? nil : e;
+            if (e.type == NSEventTypeKeyDown && e.keyCode == 53 && g_mouse_timer) { mouse_look_release(); return nil; }   // Escape
             if (e.type == NSEventTypeKeyDown && (e.modifierFlags & NSEventModifierFlagCommand)) return e;   // ⌘ shortcuts go to the menu; a key released while ⌘ is held still reaches the game, or it would stay pressed
             if (e.type == NSEventTypeKeyDown && fn_shortcut(e)) return e;   // fn (Globe) + a letter is the system's (fn+F full screen, GitHub issue #873), not the game's F
             if (!e.isARepeat) on_key(e, e.type == NSEventTypeKeyDown);
             return nil;   // Swallow it to avoid the system beep
         }];
         [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowWillCloseNotification object:win queue:nil
-                                                      usingBlock:^(NSNotification *n) { (void)n; exit(0); }];
+                                                      usingBlock:^(NSNotification *n) { (void)n; mouse_look_release(); exit(0); }];
         // Lifecycle (hle.h / dm.h): focus lost → 2, focus regained → 1; minimized → 3 + audio paused + GPU suspended, restored → resume (followed by focus regained → 1).
         // Input is released when the window stops being key (and when it is minimized) and taken up again when it is key again
         NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+        [nc addObserverForName:NSApplicationWillResignActiveNotification object:NSApp queue:nil usingBlock:^(NSNotification *n) { (void)n; mouse_look_release(); }];
+        for (NSNotificationName name in @[NSWindowWillMoveNotification, NSWindowDidChangeScreenNotification, NSWindowWillEnterFullScreenNotification, NSWindowWillExitFullScreenNotification])
+            [nc addObserverForName:name object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; mouse_look_release(); }];
         [nc addObserverForName:NSWindowDidChangeScreenNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; screen_refresh(win.screen); if (win.screen) g_layer.contentsScale = win.backingScaleFactor; screen_match_apply(); }];
         [nc addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; screen_refresh(win.screen); }];
         // Entering and leaving fullscreen: the layer is layer-backed, so its frame (and with it the drawable) follows the
@@ -1755,6 +1904,7 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
     dispatch_sync(dispatch_get_main_queue(), ^{
         // The box takes the keyboard and the mouse, so the game window never sees the key-up of the button or the touch-up of the click that opened it: nothing may stay pressed
         // while it is up, or the game reads the stuck button / touch the moment the box closes (Stardew Valley's character creation re-opened the keyboard endlessly)
+        mouse_look_release();
         g_btn = 0; g_w = g_a = g_s = g_d = 0; g_rl = g_ru = g_rr = g_rd = 0; push();
         dm_touch_set(NULL, 0);
         int min_chars = g_swkbd_min_chars > 0 ? g_swkbd_min_chars : 0;

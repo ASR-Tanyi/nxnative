@@ -3,7 +3,7 @@
 An original Switch Breath of the Wild NSP built on an M3 Max using the
 `mac15` Metal 3 host. The game loaded its shader library and finished
 prewarming. The first reported run aborted when the NVN queue signaled its
-submission fence. The shared-event fix is awaiting a gameplay retest.
+submission fence. The player confirmed BOTW runs after the shared-event fix.
 
 ## Build on the target Mac
 
@@ -47,6 +47,10 @@ shader compilation and `logs/mac_host_build.log` records the host build. The
 run directory and saves also live under `mac15/`. Only the `mac` platform
 with original Switch BOTW NSPs is enabled on Sequoia.
 
+In the game window, **Command–Shift–M** toggles mouse or trackpad camera
+control. **Escape** releases the pointer. Open the **Controls** menu to change
+the three click bindings or camera sensitivity. [Mouse and trackpad controls](playing.md#mouse-and-trackpad)
+
 ## Renderer and cache behavior
 
 - NVN submits fresh native command buffers on the host's queue. A logical
@@ -83,7 +87,7 @@ with original Switch BOTW NSPs is enabled on Sequoia.
 | Prerequisite and backend core on the Mac | Passed with Metal validation, including 32,400 range cases, two GPU submissions, indirect bindings, draw/blit readbacks, barriers, events, cancellation and completion lifetime |
 | Production host and replay fixture | Cross-compiled and linked on Linux against SDK 26.2 headers and framework stubs. The cross build uses the generator's source-only host shader fallback |
 | BOTW NSP build and launch on the M3 Max | Build succeeded. Prewarming completed with 1,482 shaders, 960 render pipelines and 10 compute pipelines before the shared-event abort. |
-| Gameplay after the shared-event fix | Awaiting native replay readback and a game run reaching the title screen and a playable save. |
+| Launch after the shared-event fix | The M3 Max player confirmed BOTW runs. |
 
 The implementation is in [the NVN renderer](../dm/gfx/nvn/nvn_mtl.m),
 [the Metal 3 replay encoders](../dm/gfx/nvn/nvn_mtl3_replay.m) and

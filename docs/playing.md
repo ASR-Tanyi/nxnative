@@ -68,7 +68,20 @@ Joy-Con 2 and the Pro Controller 2 do not appear in macOS's Bluetooth settings: 
 
 **Pairs and singles.** A left and a right Joy-Con 2 that connect play together as one pair. To make one of a pair a player of its own, held sideways, hold its **SL and SR** (the small rail buttons) for three seconds; to pair two single Joy-Cons again, hold **L** on the left one and **R** on the right one together for three seconds. The player lights show the new player numbers. A game that asks for more players than there are controllers splits a pair itself, as on a Switch (Super Mario Bros. Wonder's two-player screen). The game sees Joy-Cons as Joy-Cons: a pair is a dual controller with a sensor in each Joy-Con, a single one a sideways Joy-Con with its own sensor and rail buttons; a game that knows no Joy-Cons reads them as a Pro Controller. The gyro works, and so does rumble: each Joy-Con of a pair plays its side, a Joy-Con alone plays both, and **Game rumble**, **Rumble strength** and **Rumble cutoff** apply. Hold **Home** for two seconds for the quit prompt, as on other controllers. Each game app asks for Bluetooth access once. An app packed again asks again: macOS ties the answer to the app's signature, and the NSP script signs each build anew, so the same bundle ID does not carry it over. Not yet: the Joy-Con 2's mouse sensor. On a Pro Controller 2, pairing, every button, the sticks and Home are checked, and its rumble is [checked in Echoes of Wisdom](../dm/games/01008CF01BAAC000/README.md#controller-rumble); its gyro scale and axes are borrowed from the Joy-Con 2 and the Pro Controller, not measured on it.
 
-The mouse pointer hides when you press a key or a controller button, or move a stick, while it is over the game picture. Moving the mouse shows it again, as does switching to another window or app.
+### Mouse and trackpad
+
+With the game window active, choose **Controls → Mouse Look** or press **Command–Shift–M**. Move the mouse or slide one finger on the trackpad to turn the camera. WASD still moves the character. Press **Escape** to release the pointer and use the left click as a touchscreen tap again. Switching windows also releases it.
+
+| Input | Default Switch control | Breath of the Wild |
+|---|---|---|
+| Pointer movement, including while holding a click | Right stick | Look around or aim |
+| Left click | Y | Attack |
+| Middle click or Option–click | RS (right stick press) | Open the scope |
+| Right click, secondary trackpad click or Control–click | ZR | Hold to aim the bow, release to shoot |
+
+To remap a click, press **Escape**, then choose **Controls → Left Click**, **Middle Click** or **Right Click** and select a Switch button or **None**. For example, choose **Right Click → ZL** to guard or lock on. **Controls → Camera Sensitivity** offers 50%, 100% and 200%. The Mac remembers the bindings and sensitivity for each game. Press **Command–Shift–M** to resume mouse look.
+
+With mouse look off, the pointer hides when you press a game key or controller button, or move a stick, while it is over the game picture. Moving the mouse shows it again, as does switching to another window or app.
 
 ## Shaders on first sight
 

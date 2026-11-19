@@ -2,7 +2,7 @@
 
 Update 1.9.0 (v1114112) over the base game, SDK 20.5.22. Nintendo EPD's engine (sead / agl / gsys / ksys, NintendoWare G3d / Ui2d / Vfx / Atk, Havok) on NVN. Modules `main`, `subsdk0` (NintendoSDK_movie) and `sdk`; `subsdk0` and `sdk` are the builds Tears of the Kingdom 1.4.3 runs ([0100F2C0115B6000](../0100F2C0115B6000/README.md)). Plays on the iPhone; 60 fps (30 on the Switch) through the host's frame step. The README lists its IPA at about 16 GB.
 
-On the `mac15` branch, the NSP build succeeded on an M3 Max with macOS 15.7.5 and Xcode 26.3. The game finished shader prewarming and aborted at its submission fence. The shared-event fix is awaiting a gameplay retest. [mac15 commands and validation](../../../docs/mac15.md)
+On the `mac15` branch, the NSP build succeeded on an M3 Max with macOS 15.7.5 and Xcode 26.3. The player confirmed BOTW runs after the shared-event fix. The Mac host also has configurable mouse and trackpad controls. [mac15 commands and validation](../../../docs/mac15.md) · [Mouse and trackpad](../../../docs/playing.md#mouse-and-trackpad)
 
 ## What it needs
 
