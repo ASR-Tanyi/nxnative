@@ -83,6 +83,27 @@ To remap a click, press **Escape**, then choose **Controls → Left Click**, **M
 
 With mouse look off, the pointer hides when you press a game key or controller button, or move a stick, while it is over the game picture. Moving the mouse shows it again, as does switching to another window or app.
 
+### Keyboard and mouse layout
+
+Press **Command–Shift–M** in the game window to turn on Mouse Look. The default **Controls → Keyboard Layout → Follow Mouse Look** puts the action keys around WASD while the pointer is captured. **Escape** releases the pointer and restores the Classic keys. Choose **Keyboard + Mouse** or **Classic** in that menu to keep one layout active. The host remembers the choice for each game.
+
+| Key in Keyboard + Mouse | Switch input | BOTW with its default jump button |
+|---|---|---|
+| W, A, S, D | Left stick | Move |
+| Hold Shift while moving | B and left stick | Sprint |
+| Hold Z while moving | Half-tilted left stick | Walk slowly |
+| Space | X | Jump, climb or open the paraglider when available |
+| E or Return | A | Interact, pick up or confirm |
+| X | B | Cancel, put away or drop from a climb |
+| C | Left stick press | Crouch or stand |
+| Hold Q | ZL | Raise shield or lock on |
+| F / R | L / R | Use the selected rune / ready a weapon to throw |
+| 1 / 2 / 3 | D-pad right / left / up | Select weapon or bow / shield or arrow / rune |
+| 4 | D-pad down | Whistle |
+| Tab / M | Plus / Minus | Inventory / map |
+
+Hold **1**, **2** or **3** and move the mouse horizontally to choose an item, then release the key. The arrow keys also send the D-pad. **Shift + arrows** can move the right stick in either layout. **J/K/U/I** still send **A/B/X/Y**. In Keyboard + Mouse, **B** also draws the bow, **G** opens the scope and **T** shakes the controller. [Mouse and trackpad bindings](#mouse-and-trackpad)
+
 ## Shaders on first sight
 
 Short stutters the first time a new scene appears are normal: the app compiles graphics for it once and remembers them for the next launch. What it remembered, and what the game's list names, is built before the game starts, behind "Preparing shaders" and a progress bar when that takes more than half a second.

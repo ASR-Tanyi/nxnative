@@ -5,7 +5,7 @@
 // Cheats (hle_cheats.c): the Cheats menu's rows toggle, reload (⌘R) and open the cheats folder; its first item "Show Cheats
 // Window" (⌘⇧C, or DM_CHEATS_WINDOW=1 at launch) opens a Cheats panel beside the game: sections, search, the master switch,
 // safe mode, values, details and the import of cheat files (see the code below).
-// Key map (Nintendo layout): WASD left stick, arrow keys D-pad (with Shift held: the right stick, for the camera), J=A K=B U=X I=Y, Q=L E=R, Z=ZL C=ZR, F=press left stick G=press right stick, Return=+ Tab=−, Space=shake the controller.
+// Controls > Keyboard Layout selects the key map (keyboard_mac.h). Automatic uses the WASD action layout with Mouse Look and Classic otherwise.
 // Controllers: face buttons as on the iPhone, by position (right A, bottom B, top X, left Y) or on a Nintendo pad by its labels (pad_apple.h), shoulders L R, triggers ZL ZR, Menu + Options −, both sticks and their presses.
 // Each controller is a player of its own (local co-op): the first one connected is player 1, together with the keyboard, the next player 2, and so on up to 8 (pad_slots.h);
 // DM_PAD_MERGE=1 merges every controller into player 1 instead, DM_KBD_PLAYER=own makes the keyboard player 1 on its own, with the controllers from player 2 on.
@@ -15,6 +15,7 @@
 #import <GameController/GameController.h>
 #include "dm.h"
 #include "dm_input.h"
+#include "keyboard_mac.h"
 #include "mouse_look.h"
 #include "front.h"
 #include "hle.h"
@@ -40,9 +41,8 @@ static void merge_rumble_to(void (*sink)(const dm_haptic_state *));
 #include <sys/stat.h>
 
 static CAMetalLayer *g_layer;
-static uint64_t g_btn;
-static int g_w, g_a, g_s, g_d;
-static int g_rl, g_ru, g_rr, g_rd;   // arrow keys pressed with Shift held: the right stick (each goes back up as it went down, whatever Shift does meanwhile)
+static mac_keyboard g_keyboard;
+static mac_key_preset g_keyboard_preset;
 static int g_input_on = 1;   // main thread: the game window is key, so its keyboard, mouse and controllers reach the game (input_release / input_resume)
 static mouse_look g_mouse_look;
 static uint64_t g_mouse_bindings[MOUSE_BUTTONS];
@@ -151,21 +151,17 @@ static void cursor_hide_for_input(void) {
     if (NSPointInRect([v convertPoint:g_win.mouseLocationOutsideOfEventStream fromView:nil], v.bounds)) [NSCursor setHiddenUntilMouseMoves:YES];
 }
 static void push(void) {
-    int32_t lx = (g_d - g_a) * 32767, ly = (g_w - g_s) * 32767;
-    int32_t rx = (g_rr - g_rl) * 32767, ry = (g_ru - g_rd) * 32767;
-    uint64_t buttons = g_btn;
-    mouse_look_merge(&g_mouse_look, &buttons, &rx, &ry);
-    dm_input_set(buttons, lx, ly, rx, ry);
+    mac_key_report r = mac_keys_read(&g_keyboard);
+    mouse_look_merge(&g_mouse_look, &r.buttons, &r.rx, &r.ry);
+    dm_input_set(r.buttons, r.lx, r.ly, r.rx, r.ry);
 }
-static int key_bit(unsigned short code) {
-    switch (code) {
-        case 38: return 0;  case 40: return 1;  case 32: return 2;  case 34: return 3;    // J K U I → A B X Y
-        case 3: return 4;   case 5: return 5;                                            // F G → press stick
-        case 12: return 6;  case 14: return 7;  case 6: return 8;   case 8: return 9;    // Q E Z C → L R ZL ZR
-        case 36: return 10; case 48: return 11;                                          // Return Tab → + −
-        case 123: return 12; case 126: return 13; case 124: return 14; case 125: return 15; // ← ↑ → ↓
-    }
-    return -1;
+static void keyboard_layout_apply(void) {
+    mac_keys_layout(&g_keyboard, g_keyboard_preset, g_mouse_timer != nil);
+    push();
+}
+static void keyboard_release(void) {
+    mac_keys_clear(&g_keyboard);
+    push();
 }
 // fn held with a letter: the arrow and function keys carry the same modifier flag, so the key must be a letter for this to be a Globe shortcut
 static int fn_shortcut(NSEvent *e) {
@@ -173,23 +169,22 @@ static int fn_shortcut(NSEvent *e) {
     return (e.modifierFlags & NSEventModifierFlagFunction) && s.length == 1 && [[NSCharacterSet letterCharacterSet] characterIsMember:[s characterAtIndex:0]];
 }
 static ctrl_prompt g_cp; static int g_cp_confirm, g_cp_cancel;   // the controller applet's prompt (front_ctrl_support) and a key pressed in it since its last step
+static home_quit g_hq;
 static int cp_poll(void);
 static void on_key(NSEvent *e, int down) {
-    if (!g_input_on) return;
+    if (!g_input_on || g_text_box || hq_blocks_input(g_hq.phase)) return;
     unsigned short c = e.keyCode;
-    if (cp_blocks_input(g_cp.phase)) {   // the prompt has the keyboard: Return or J (A) is done, Escape or K (B) closes it, no key reaches the game
-        if (down && g_cp.phase == CP_OPEN) { if (c == 53 || c == 40) g_cp_cancel = 1; else if (c == 36 || c == 38) g_cp_confirm = 1; cp_poll(); }
+    if (cp_blocks_input(g_cp.phase)) {   // accept both layouts' confirm/cancel keys even after the prompt releases capture
+        if (down && g_cp.phase == CP_OPEN) {
+            uint64_t action = mac_key_binding(c, true, false);
+            if (c == 53 || action == DM_BTN_B) g_cp_cancel = 1;
+            else if (action == DM_BTN_A) g_cp_confirm = 1;
+            cp_poll();
+        }
         return;
     }
-    switch (c) { case 13: g_w = down; break; case 0: g_a = down; break; case 1: g_s = down; break; case 2: g_d = down; break; }
-    // An arrow key pressed with Shift held is the right stick until it is released; without Shift, the D-pad. The keyboard had no right stick: a 3D game's camera
-    // could be turned only with a controller (Donkey Kong Bananza)
-    int *rs = c == 123 ? &g_rl : c == 126 ? &g_ru : c == 124 ? &g_rr : c == 125 ? &g_rd : NULL;
-    if (rs && (down ? (e.modifierFlags & NSEventModifierFlagShift) != 0 : *rs)) { *rs = down; push(); return; }
-    int b = key_bit(c);
-    uint64_t m = b >= 0 ? 1ull << b : c == 49 ? DM_BTN_SHAKE : 0;   // Space: shaken while held
-    g_btn = down ? (g_btn | m) : (g_btn & ~m);
-    if (down && (m || c == 13 || c == 0 || c == 1 || c == 2)) cursor_hide_for_input();   // a key the game takes (WASD: the left stick)
+    if (!mac_keys_event(&g_keyboard, c, down, (e.modifierFlags & NSEventModifierFlagShift) != 0)) return;
+    if (down) cursor_hide_for_input();
     push();
 }
 
@@ -209,7 +204,6 @@ static void pad_set(int p, uint64_t m, int32_t lx, int32_t ly, int32_t rx, int32
     dm_pad_set_player(p, m, lx, ly, rx, ry);
 }
 static void hq_poll(void);
-static home_quit g_hq;   // the Home button's hold and quit prompt (home_quit.h): while the prompt is open the controllers' input goes to it, not to the game
 static int g_press_to_join;   // DM_PAD_PRESS_TO_JOIN=1, below pad_read
 static int pad_join(const void *owner, const char *name);
 static const char *pad_name(GCController *c);
@@ -361,7 +355,7 @@ static void input_release(void) {
     g_input_on = 0;
     dm_motion_pro_active(0); hidpad_motion_clear();
     dm_switch2_active(0); dm_jc1_active(0);
-    g_btn = 0; g_w = g_a = g_s = g_d = 0; g_rl = g_ru = g_rr = g_rd = 0; push();
+    keyboard_release();
     if (g_mouse_down) { g_mouse_down = 0; dm_touch_set(NULL, 0); }
     pads_release();
 }
@@ -566,6 +560,7 @@ static void hq_changed(hq_phase was, hq_phase now, GCController *holder) {
         break;
     case HQ_PROMPT: {
         mouse_look_release();
+        keyboard_release();
         pads_release();   // nothing the game held stays pressed while the prompt has the controllers
         if (g_mouse_down) { g_mouse_down = 0; dm_touch_set(NULL, 0); }
         dm_focus_set(2);
@@ -611,7 +606,7 @@ static void hq_close(void) {
 // The controller applet's prompt (front.h front_ctrl_support, ctrl_prompt.h; GitHub issue #1640): the game asked for more players than it sees, and the game's thread waits while
 // the prompt is up over the game, as the Switch's player screen. A controller that joins meanwhile is a player at once (its first button with DM_PAD_PRESS_TO_JOIN, its
 // connection without), and the count on the card follows. A and B are GameController's buttonA and buttonB on any controller, as the Home prompt's (a raw HID pad's A and B,
-// pad_hid_mac.h); the press that makes a controller join does not count. Return or J is done, Escape or K closes it. The game gets no controller, keyboard or mouse input
+// pad_hid_mac.h); the press that makes a controller join does not count. Return, E or J confirms. Escape, X or K closes it. The game gets no controller, keyboard or mouse input
 // while it is up, nor until the A or B that closed it is let go. A front end passes the texts in the player's language as DM_CTRL_PROMPT_TEXT (cp_text)
 static NSView *g_cp_view; static dispatch_semaphore_t g_cp_done; static int g_cp_ok, g_cp_shown_joined = -1, g_cp_shown_on = -1;
 static void cp_buttons(int *a, int *b) {
@@ -663,7 +658,7 @@ int front_ctrl_support(int min, int max) {
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_main_queue(), ^{
         mouse_look_release();
-        g_btn = 0; g_w = g_a = g_s = g_d = 0; g_rl = g_ru = g_rr = g_rd = 0; push();   // nothing the game held stays pressed while the prompt has the input
+        keyboard_release();
         if (g_mouse_down) { g_mouse_down = 0; dm_touch_set(NULL, 0); }
         pads_release();
         int a, b; cp_buttons(&a, &b);
@@ -711,7 +706,7 @@ static void mouse_look_release(void) {
     g_win.acceptsMouseMovedEvents = g_accepted_mouse_moves;
     mouse_cursor_restore();
     g_mouse_look = (mouse_look){0};
-    push();
+    keyboard_layout_apply();
 }
 static BOOL g_ignore_warp_delta;
 static void mouse_look_capture(void) {
@@ -743,6 +738,7 @@ static void mouse_look_capture(void) {
         if (mouse_look_sample(&g_mouse_look, CACurrentMediaTime(), g_mouse_sensitivity)) push();
     }];
     [NSRunLoop.mainRunLoop addTimer:g_mouse_timer forMode:NSRunLoopCommonModes];
+    keyboard_layout_apply();
 }
 static BOOL mouse_look_event(NSEvent *e) {
     if (!g_mouse_timer) return NO;
@@ -771,16 +767,25 @@ void front_picture_shape(int w, int h) { if (w > 0 && h > 0) g_picture_aspect = 
 - (NSMenu *)controlsMenu;
 @end
 @implementation DmGameView {
-    NSUserDefaults *_mousePrefs;
+    NSUserDefaults *_controlPrefs;
 }
 - (void)toggleMouseLook:(id)sender {
     (void)sender;
     if (g_mouse_timer) mouse_look_release(); else mouse_look_capture();
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(chooseKeyboardLayout:)) {
+        item.state = item.tag == g_keyboard_preset ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
     if (item.action != @selector(toggleMouseLook:)) return YES;
     item.state = g_mouse_timer ? NSControlStateValueOn : NSControlStateValueOff;
     return mouse_look_available();
+}
+- (void)chooseKeyboardLayout:(NSMenuItem *)item {
+    g_keyboard_preset = (mac_key_preset)item.tag;
+    keyboard_layout_apply();
+    [_controlPrefs setInteger:item.tag forKey:@"keyboardLayout"];
 }
 - (void)applyMouseChoice:(NSMenuItem *)item {
     NSInteger group = item.parentItem.tag;
@@ -791,13 +796,23 @@ void front_picture_shape(int w, int h) { if (w > 0 && h > 0) g_picture_aspect = 
 - (void)chooseMouseSetting:(NSMenuItem *)item {
     mouse_look_release();   // a button can still be held under its old binding
     [self applyMouseChoice:item];
-    [_mousePrefs setInteger:item.tag forKey:item.parentItem.representedObject];
+    [_controlPrefs setInteger:item.tag forKey:item.parentItem.representedObject];
 }
 - (NSMenu *)controlsMenu {
-    _mousePrefs = [[NSUserDefaults alloc] initWithSuiteName:[@"org.nxnative.mouse." stringByAppendingString:@(DM_GAME_ID)]];
+    _controlPrefs = [[NSUserDefaults alloc] initWithSuiteName:[@"org.nxnative.mouse." stringByAppendingString:@(DM_GAME_ID)]];
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Controls"];
     NSMenuItem *toggle = [menu addItemWithTitle:@"Mouse Look" action:@selector(toggleMouseLook:) keyEquivalent:@"m"];
     toggle.target = self; toggle.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    NSMenu *layouts = [[NSMenu alloc] initWithTitle:@"Keyboard Layout"];
+    [menu addItemWithTitle:layouts.title action:nil keyEquivalent:@""].submenu = layouts;
+    NSArray<NSString *> *names = @[@"Follow Mouse Look", @"Keyboard + Mouse", @"Classic"];
+    NSInteger savedLayout = [_controlPrefs integerForKey:@"keyboardLayout"];
+    g_keyboard_preset = savedLayout >= 0 && savedLayout < (NSInteger)names.count ? (mac_key_preset)savedLayout : MAC_KEYS_AUTO;
+    for (NSUInteger i = 0; i < names.count; i++) {
+        NSMenuItem *choice = [layouts addItemWithTitle:names[i] action:@selector(chooseKeyboardLayout:) keyEquivalent:@""];
+        choice.target = self; choice.tag = (NSInteger)i;
+    }
+    keyboard_layout_apply();
     [menu addItem:NSMenuItem.separatorItem];
     // Group tags use AppKit's button numbers. The last group stores the sensitivity as a percentage.
     const struct { NSInteger group; NSString *title, *pref; NSInteger initial; } settings[] = {
@@ -819,7 +834,7 @@ void front_picture_shape(int w, int h) { if (w > 0 && h > 0) g_picture_aspect = 
                 choice.tag = bit < 0 ? 0 : 1 << bit; choice.target = self;
             }
         }
-        NSNumber *saved = [_mousePrefs objectForKey:settings[i].pref];
+        NSNumber *saved = [_controlPrefs objectForKey:settings[i].pref];
         NSMenuItem *choice = [saved isKindOfClass:NSNumber.class] ? [sub itemWithTag:saved.integerValue] : nil;
         [self applyMouseChoice:choice ?: [sub itemWithTag:settings[i].initial]];
     }
@@ -1808,7 +1823,14 @@ void front_run(void (*guest)(void)) {
         pads_start();
         NSEventMask mouseEvents = NSEventMaskMouseMoved | NSEventMaskLeftMouseDragged | NSEventMaskRightMouseDragged | NSEventMaskOtherMouseDragged |
             NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp | NSEventMaskRightMouseDown | NSEventMaskRightMouseUp | NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp;
-        [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp | mouseEvents handler:^NSEvent *(NSEvent *e) {
+        [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp | NSEventMaskFlagsChanged | mouseEvents handler:^NSEvent *(NSEvent *e) {
+            if (e.type == NSEventTypeFlagsChanged) {
+                // A modifier event can be windowless. Only take it for the active game, and pass it on to AppKit.
+                if (win.isKeyWindow && NSApp.isActive && (!e.window || e.window == win) && !game_input_blocked() && !g_text_box &&
+                    mac_keys_modifiers(&g_keyboard, e.keyCode, (e.modifierFlags & NSEventModifierFlagShift) != 0,
+                                       (e.modifierFlags & NSEventModifierFlagCommand) != 0)) push();
+                return e;
+            }
             if (e.window != win) return e;
             if (e.type != NSEventTypeKeyDown && e.type != NSEventTypeKeyUp) return mouse_look_event(e) ? nil : e;
             if (e.type == NSEventTypeKeyDown && e.keyCode == 53 && g_mouse_timer) { mouse_look_release(); return nil; }   // Escape
@@ -1905,7 +1927,7 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
         // The box takes the keyboard and the mouse, so the game window never sees the key-up of the button or the touch-up of the click that opened it: nothing may stay pressed
         // while it is up, or the game reads the stuck button / touch the moment the box closes (Stardew Valley's character creation re-opened the keyboard endlessly)
         mouse_look_release();
-        g_btn = 0; g_w = g_a = g_s = g_d = 0; g_rl = g_ru = g_rr = g_rd = 0; push();
+        keyboard_release();
         dm_touch_set(NULL, 0);
         int min_chars = g_swkbd_min_chars > 0 ? g_swkbd_min_chars : 0;
         NSString *info = [NSString stringWithFormat:@"%s%s%s", sub ? sub : "", sub && *sub && guide && *guide ? "\n" : "", guide ? guide : ""];
