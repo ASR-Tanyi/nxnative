@@ -28,6 +28,10 @@ There is no game-specific patch and no rewriter cut. The profile is the NSP scri
 
 Measured on the M6 (16 GB), in a 1280x720 window: 60 fps at the title (frame time p50 16.67 ms) and on the forest path (p50 16.66 ms, GPU p50 12.75 ms), with one hitch of 1.1 s while a pipeline compiled; the host's footprint was 6.8 GB in play.
 
+## Validation
+
+Raw-pointer discovery validation (2026-11-18, Apple M6 16 GB, macOS 27.2, Xcode 27.2): main `2925d7af`, chain `5ea15f2c8240`, against `039676b4017a`. Both revisions build all 42,313 shaders; 12,689 raw-table reflections change, with zero MSL or variant changes. The 31,613 pipeline-base interface warnings are identical to baseline (issue #283), with none newly introduced. The temporary 120-second no-input startup route reaches the title screen and passes `regress.py check` as `CHANGED`, with pipeline prebuild off, no new red logs or missing libraries, and screenshots within tolerance. Its raw stores and the known unmapped sparse-buffer read at frame 5 run; no supported fixed pointer source is read on this route. In the measured startup window, 59.5 → 59.4 fps and p99 frame time 25.62 → 23.31 ms; peak footprint 3,587 → 3,595 MB. This single comparison does not isolate discovery cost. The temporary route was not retained; gameplay and iOS were not rerun.
+
 ## Found on this game
 
 - The rewriter could not place patch areas for `main`, 185 MB of text with 90 MB of data after it ([Hops for sites neither patch area reaches](../../../docs/reference/rewriter.md#hops-for-sites-neither-patch-area-reaches)).
@@ -44,6 +48,7 @@ Measured on the M6 (16 GB), in a 1280x720 window: 60 fps at the title (frame tim
 - Its streamed textures, gathered on the GPU from the physical memory behind its sparse pools, put every pool behind them into the residency set for good, and the forest entry fell to a few frames a second ([GPU copies into a sparse pool's textures, stored through the page table](../../../docs/reference/nvn-objects.md#gpu-copies-into-a-sparse-pools-textures-stored-through-the-page-table)).
 - It sets the float blend clamp to the largest finite value, which Metal cannot do; no colour target held a non-finite pixel over the opening, so nothing drawn differs ([Float blend clamp](../../../docs/reference/nvn-objects.md#float-blend-clamp-nvncommandbuffersetfloatblendclamp)).
 - 6 of its 7,568 compute shaders run a block with subgroup operations at a loop exit ([A loop exit's subgroup block run by the lanes of every iteration together](../../../docs/reference/shaders.md#a-loop-exits-subgroup-block-run-by-the-lanes-of-every-iteration-together)): found by a translator A/B, not by a picture.
+- A first-run prebuild wrote 15,764 pulling bases to `pso_archive/p*.mtl4a` without opening them in the same session, leaving gameplay draws waiting on `pulling base not made yet` ([Prebuilt pipeline archives not opened during the first run](../../../docs/reference/shaders.md#prebuilt-pipeline-archives-not-opened-during-the-first-run); [GitHub issue #3030](https://github.com/seedds/nxnative/issues/3030)).
 
 ## Open
 

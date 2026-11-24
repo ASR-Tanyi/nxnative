@@ -1,9 +1,11 @@
 """Provisional memory layouts must leave room for the game's initial heap."""
 import hashlib
 from pathlib import Path
+import struct
 import sys
 import tempfile
 import unittest
+import zlib
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[3]
@@ -80,7 +82,72 @@ class HeapSignals(unittest.TestCase):
         self.assertGreaterEqual(heap, 0x86000000)
 
 
+class HeapCheckAddressSpace(unittest.TestCase):
+    """No heap and the alias region nearly full within seconds: StandardAllocator's region (pool − used) leaves Unity's own regions no room. The heap check shrinks that region with
+    stdalloc_cap and keeps the hardware pool, which the game reads as its memory (Pokémon Friends picks its Low graphics at 2048 MB or less, issue #2830)"""
+    FULL = '>>> nnMain\n[dm] [mem] alias region mapped up to +4.26 GB (alias region 4.38 GB)\n'
+
+    def signals(self, log=FULL, **keys):
+        keys = {'mem_reserve': '0x140000000', 'mem_alias': '0x118000000', 'mem_stack': '0x10000000', 'app_pool': '0xCD500000', 'sys_resource': '0x3000000', **keys}
+        return pg.heap_signals(log, type('Profile', (), {'get': staticmethod(lambda k, d='': keys.get(k, d))}))
+
+    def test_a_full_alias_region_caps_standardallocator_and_keeps_the_pool(self):   # AI: THE SOMNIUM FILES - nirvanA Initiative: +4.26 GB of 4.38 in 5 s with the hardware pool
+        sig = self.signals()
+        self.assertEqual(set(sig), {'stdalloc_cap'})   # no app_pool: the game reads the hardware's 3.2 GB, above Pokémon Friends' 2048 MB
+        self.assertEqual(int(sig['stdalloc_cap'][0], 0), 0x40000000)
+        self.assertNotIn('\n', sig['stdalloc_cap'][1])
+
+    def test_room_left_sets_nothing(self):
+        self.assertEqual(self.signals('>>> nnMain\n[dm] [mem] alias region mapped up to +3.50 GB (alias region 4.38 GB)\n'), {})
+
+    def test_a_heap_or_no_system_resource_sets_nothing(self):
+        self.assertEqual(self.signals(self.FULL + '[dm] [mem] heap 0.12 GB\n'), {})
+        self.assertEqual(self.signals(sys_resource='0x0'), {})
+
+    def test_a_profile_that_already_limits_standardallocator_is_kept(self):
+        self.assertEqual(self.signals(stdalloc_cap='0x60000000'), {})   # Sonic Superstars' hand-set 1.5 GB
+        self.assertEqual(self.signals(app_pool='0x40000000'), {})       # a profile from the heap check's earlier rule, which set a 1 GB pool
+
+
 class GlslSources(unittest.TestCase):
+    def test_fixed_function_detection_preserves_shader_and_api_evidence(self):
+        egl = {'eglCreateWindowSurface'}
+        for image, imports in ((b'glVertexPointer\0', egl), (b'', egl | {'glMatrixMode'}),
+                               (('glEnableClientState' + '\0').encode('utf-16-le'), egl)):
+            self.assertTrue(pg.gl_fixed_calls(image, imports))
+        self.assertFalse(pg.gl_fixed_calls(b'glVertexPointerSomething\0', egl))
+        shaderless = pg.shader_sources(egl, 0, [], 0, 0, gl_fixed_calls=True)
+        self.assertEqual(shaderless['graphics'][0], 'gl')
+        self.assertTrue(shaderless['gl_fixed'][0])
+        self.assertFalse(shaderless['gl_capture'][0])
+        for evidence in ('gl_names', 'gl_src', 'gl_files', 'nro_imports'):
+            with self.subTest(evidence=evidence):
+                with_shaders = pg.shader_sources(
+                    egl, 0, [], 0, 0, gl_fixed_calls=True,
+                    gl_names=int(evidence == 'gl_names'), gl_src=int(evidence == 'gl_src'), gl_files=int(evidence == 'gl_files'),
+                    nro_imports=frozenset({'glShaderSource'}) if evidence == 'nro_imports' else frozenset(),
+                )
+                self.assertEqual(with_shaders['graphics'][0], 'gl')
+                self.assertFalse(with_shaders['gl_fixed'][0])
+        for imports, api in ((egl | {'vkCreateInstance'}, 'vulkan'), (egl | {'nvnBootstrapLoader'}, 'nvn')):
+            other = pg.shader_sources(imports, 0, [], 0, 0, gl_fixed_calls=True)
+            self.assertEqual(other['graphics'][0], api)
+            self.assertFalse(other['gl_fixed'][0])
+
+    def test_survey_detects_a_managed_gl_loader(self):
+        managed = 'glShaderSource'.encode('utf-16-le')
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / 'main').write_bytes(b'NSO0')
+            manifest = root / 'romfs_manifest.tsv'
+            manifest.write_text('# Empty RomFS\n')
+            imports = [('eglCreateWindowSurface', False, 1)]
+            with mock.patch.object(pg, 'nso', return_value=(managed, '', [0, 0, 0], 0)), mock.patch.object(pg.nso_syms, 'dynsyms', return_value=imports):
+                facts = pg.facts_of(root, manifest)
+            self.assertEqual(facts['gl_names'], 1)
+            self.assertEqual(pg.gl_name_count(b'\0glShaderSource\0' + managed, {'eglCreateWindowSurface'}), 2)
+            self.assertEqual(pg.gl_name_count(managed, set()), 0)
+
     def test_language_preamble_is_not_a_shader(self):
         self.assertEqual(pg.glsl_sources(b'#version 450 core\n#define float4 vec4\n\0void main() {}\0'), 0)
 
@@ -108,6 +175,10 @@ class GlslSources(unittest.TestCase):
         self.assertIn('.glsl', pg.GL_FILES)
         s = pg.shader_sources({'eglCreateWindowSurface'}, 0, [], 0, 0, gl_names=1, gl_src=2, gl_files=6)
         self.assertEqual(s['graphics'][0], 'gl'); self.assertFalse(s['gl_capture'][0])
+
+    def test_embedded_main_glsl_alone_still_enables_gl_capture(self):   # embedded movie/utility shaders in main must not suppress capture when RomFS has no standalone shaders
+        s = pg.shader_sources({'eglCreateWindowSurface'}, 0, [], 0, 0, gl_names=1, gl_src=3, gl_files=0)
+        self.assertEqual(s['graphics'][0], 'gl'); self.assertTrue(s['gl_capture'][0])
 
 
 class Npdm(unittest.TestCase):
@@ -272,6 +343,34 @@ class AddressRegions(unittest.TestCase):
 
     def test_no_table(self):
         self.assertEqual(pg.region_findings('', 0x118000000), [])
+
+
+class Ue3OodlePackages(unittest.TestCase):
+    @staticmethod
+    def pkg(blocks, block=0x40, wide=False):
+        raw = sum(u for _, u in blocks)
+        comp = sum(len(s) for s, _ in blocks)
+        head = (pg.UE3_TAG + bytes(4) if wide else pg.UE3_TAG) + struct.pack('<QQQ' if wide else '<III', block, comp, raw)
+        table = b''.join(struct.pack('<QQ' if wide else '<II', len(s), u) for s, u in blocks)
+        return pg.UE3_TAG + struct.pack('<HH', 864, 0x80e3) + b'summary.' + head + table + b''.join(s for s, _ in blocks)
+
+    def test_detects_narrow_and_wide_oodle_chunks(self):
+        for wide in (False, True):
+            with self.subTest(wide=wide):
+                self.assertTrue(pg.ue3_oodle_package(self.pkg([(b'\x8c\x0a' + b'x' * 10, 0x40), (b'\x8c\x0a' + b'y' * 10, 0x20)], wide=wide)))
+                z = zlib.compressobj(wbits=10)
+                zblk = z.compress(b'TweakvarMap' * 8) + z.flush()
+                self.assertFalse(pg.ue3_oodle_package(self.pkg([(zblk, 88)], block=512, wide=wide)))
+                # A stored uncompressed block whose first byte happens to be 0x8c is not Oodle.
+                self.assertFalse(pg.ue3_oodle_package(self.pkg([(b'\x8c' + b'raw' * 5, 16)], wide=wide)))
+
+    def test_rejects_non_ue3_and_truncated_headers(self):
+        self.assertFalse(pg.ue3_oodle_package(pg.UE3_TAG + b'\0'))
+        self.assertFalse(pg.ue3_oodle_package(pg.UE3_TAG + struct.pack('<i', -7)))
+        self.assertFalse(pg.ue3_oodle_package(pg.UE3_TAG + struct.pack('<HH', 864, 0) + pg.UE3_TAG + bytes(4) + struct.pack('<QQQ', 0, 0, 0)))
+        self.assertFalse(pg.ue3_oodle_package(pg.UE3_TAG + struct.pack('<HH', 864, 0) + pg.UE3_TAG + bytes(4) + struct.pack('<QQQ', 0x40, 0, 0)))
+        wide = self.pkg([(b'\x8c\x0a' + b'x' * 10, 0x40)], wide=True)
+        self.assertFalse(pg.ue3_oodle_package(wide[:28]))
 
 
 if __name__ == '__main__':

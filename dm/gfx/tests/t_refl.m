@@ -6,6 +6,7 @@
 #import <Metal/Metal.h>
 #include <stdio.h>
 #include <string.h>
+#include "../nvn/dmsh_abi.h"
 
 enum { C = NVN_RB_CBUF, S = NVN_RB_SAMP, T = NVN_RB_TEX, I = NVN_RB_IMG, TB = NVN_RB_TBUF };
 enum { F = NVN_DPF_FLOAT, U = NVN_DPF_UINT, D = NVN_DPF_DEPTH };
@@ -17,6 +18,18 @@ static void check(const char *what, long want, long got) {
 
 int main(void) { @autoreleasepool {
     nvn_refl r; char err[160] = "";
+    {   // Pointer discovery is metadata on the existing pool-table binding; there is no new GPU argument.
+        NSMutableDictionary *b = [@{@"kind": @"gmem_map", @"arg_id": @0, @"msl_name": @"cp_s0", @"pointers": @[@[@1, @8], @[@0, @0]]} mutableCopy];
+        NSDictionary *j = @{@"route": @"B", @"bindings": @[b]};
+        check("raw pointers: conversion", 0, nvn_refl_from_json(j, &r, err, sizeof err));
+        check("raw pointers: existing table kind", NVN_RB_GMEM, r.b[0].kind); check("raw pointers: count", 2, r.ngptr);
+        check("raw pointers: slot", 1, r.gptr[0].reg); check("raw pointers: byte", 8, r.gptr[0].off);
+        for (id invalid in @[@[@[@16, @0]], @[@[@0, @65529]], @[@[@0]], @[@[@"bad", @0]], @"bad"]) {
+            b[@"pointers"] = invalid; check("raw pointers: malformed source rejected", 1, nvn_refl_from_json(j, &r, err, sizeof err) != 0);
+        }
+        NSMutableArray *many = [NSMutableArray array]; for (int i = 0; i <= DMSH_GPTR_MAX; i++) [many addObject:@[@0, @(8 * i)]];
+        b[@"pointers"] = many; check("raw pointers: too many rejected", 1, nvn_refl_from_json(j, &r, err, sizeof err) != 0);
+    }
     {   // A row-wrapped BUFFER binding has a lead group followed by logical widths.
         NSArray *forms = @[
             @{@"kind": @"tex", @"reg": @0, @"msl_name": @"cp_t_tcb_8", @"msl_type": @"texture2d<uint>"},
@@ -162,11 +175,25 @@ int main(void) { @autoreleasepool {
         check("B uniform handles: other word at byte 0 of slot 2", 1, r.b[2].soff); check("B uniform handles: its slot", 2, r.b[2].sreg); check("B uniform handles: one word has no other", 0, r.b[3].soff);
         printf("%-60s %s\n", "B images, buffer textures and two-word handles in uniform slots", fail == f1 ? "✓" : "✗");
     }
+    {   int f1 = fail;   // image pools (NVN_RB_IMGP): 3D read_write, 2D read-only, and texture_buffer write-only
+        NSDictionary *j = @{@"route": @"B", @"bindings": @[
+            @{@"kind": @"img_pool", @"arg_id": @0, @"msl_name": @"cp_i3d_cb0_40000000_", @"msl_type": @"constant spvPool_cp_i3d_cb0_40000000_*", @"elem": @"texture3d<float, access::read_write>"},
+            @{@"kind": @"img_pool", @"arg_id": @1, @"msl_name": @"cp_i2d_cb0_40000000_r32ui", @"msl_type": @"constant spvPool_cp_i2d_cb0_40000000_r32ui*", @"elem": @"texture2d<uint, access::read>"},
+            @{@"kind": @"img_pool", @"arg_id": @2, @"msl_name": @"cp_ib_cb0_40000000_", @"msl_type": @"constant spvPool_cp_ib_cb0_40000000_*", @"elem": @"texture_buffer<int, access::write>"}]};
+        check("B image pool: conversion succeeds", 0, nvn_refl_from_json(j, &r, err, sizeof err));
+        check("B image pool: pool flag", 1, r.pool); check("B image pool: bindless flag", 1, r.bindless); check("B image pool: dyn stays 0", 0, r.dyn);
+        check("B image pool[0]: kind", NVN_RB_IMGP, r.b[0].kind); check("B image pool[0]: 3D", MTLTextureType3D, r.b[0].dtt); check("B image pool[0]: float", NVN_DPF_FLOAT, r.b[0].dpf); check("B image pool[0]: rw", 1, r.b[0].rw);
+        check("B image pool[1]: kind", NVN_RB_IMGP, r.b[1].kind); check("B image pool[1]: 2D", MTLTextureType2D, r.b[1].dtt); check("B image pool[1]: uint", NVN_DPF_UINT, r.b[1].dpf); check("B image pool[1]: read-only", 0, r.b[1].rw);
+        check("B image pool[2]: kind", NVN_RB_IMGP, r.b[2].kind); check("B image pool[2]: buffer", MTLTextureTypeTextureBuffer, r.b[2].dtt); check("B image pool[2]: sint", NVN_DPF_SINT, r.b[2].dpf); check("B image pool[2]: rw", 1, r.b[2].rw);
+        printf("%-60s %s\n", "B image pools: 3D rw, 2D read-only, texture_buffer write", fail == f1 ? "✓" : "✗");
+    }
     {   int f1 = fail;
         NSDictionary *b1 = @{@"route": @"B", @"bindings": @[@{@"kind": @"foo", @"arg_id": @0, @"msl_name": @"x", @"msl_type": @"constant _16*"}]};
         NSDictionary *b2 = @{@"route": @"B", @"bindings": @[@{@"kind": @"tex", @"reg": [NSNull null], @"arg_id": @0, @"msl_name": @"fp_t_x", @"msl_type": @"texture2d<float>"}]};
+        NSDictionary *b3 = @{@"route": @"B", @"bindings": @[@{@"kind": @"samp", @"reg": [NSNull null], @"arg_id": @0, @"msl_name": @"fp_s_x", @"msl_type": @"sampler"}]};
         check("B unknown kind fails", 1, nvn_refl_from_json(b1, &r, err, sizeof err) != 0);
         check("B texture without a resolved slot fails", 1, nvn_refl_from_json(b2, &r, err, sizeof err) != 0);
+        check("B sampler without a resolved slot fails", 1, nvn_refl_from_json(b3, &r, err, sizeof err) != 0);
         printf("%-60s %s\n", "B negative control: unknown kind / missing slot", fail == f1 ? "✓" : "✗");
     }
     printf("== %d checks, %d failed ==\n", n, fail);

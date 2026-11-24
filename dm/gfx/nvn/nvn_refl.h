@@ -9,7 +9,9 @@
 
 enum { NVN_RB_CBUF = 1, NVN_RB_SAMP, NVN_RB_TEX, NVN_RB_IMG, NVN_RB_TBUF,
        NVN_RB_SBUFP, NVN_RB_SUPPORT, NVN_RB_C1, NVN_RB_DRV0, NVN_RB_DRV2, NVN_RB_SAMPT, NVN_RB_UBOP, NVN_RB_TEXU, NVN_RB_SAMPU, NVN_RB_SAMPI, NVN_RB_SBUFU, NVN_RB_TEXD, NVN_RB_SAMPD, NVN_RB_TEXA, NVN_RB_SAMPA, NVN_RB_GEOMETRY, NVN_RB_TEXP, NVN_RB_SAMPP, NVN_RB_TEXH, NVN_RB_SAMPH, NVN_RB_BORDER, NVN_RB_PUSH, NVN_RB_GMEM, NVN_RB_GMEML, NVN_RB_IMGU, NVN_RB_TBUFU, NVN_RB_CBSIZE, NVN_RB_SBUFQ, NVN_RB_TBIAS, NVN_RB_SBLEN,
-       NVN_RB_RT_SCENE, NVN_RB_RT_PARAMETERS, NVN_RB_RT_ERRORS, NVN_RB_RT_INSTANCE_SBT, NVN_RB_RT_BANK0, NVN_RB_RT_BANK3 };
+       NVN_RB_RT_SCENE, NVN_RB_RT_PARAMETERS, NVN_RB_RT_ERRORS, NVN_RB_RT_INSTANCE_SBT, NVN_RB_RT_BANK0, NVN_RB_RT_BANK3, NVN_RB_IMGP,
+       NVN_RB_END };   // one past the last kind: dm/gfx/tests/t_binding_lists.m stops building when a kind is added, until the per-draw binding lists (sh_lists_make) decide on it
+// IMGP: the image pool as one array indexed by the handle's image ID, for an image handle traced to no slot (dmsh_reflect.py pool_arrays, nvn_mtl.m img_pool_gpu)
 // IMGU / TBUFU: an image / a buffer texture whose handle the game keeps in uniform slot reg at byte off, as TEXU (Unreal Engine 5.4 on the Switch 2 keeps every image in c[3]). Read at encode time
 // GMEM: the host's memory pool table for global memory the translator traced to no storage buffer (dmsh_abi.h DMSH_GMEM_MAP_*, nvn_mtl.m gmem_map_gpu): the shader may read, and with rw
 // write, anything in any pool. GMEML: the write log of those stores (dmsh_abi.h DMSH_GMEM_LOG_*, nvn_mtl.m gml_take)
@@ -90,6 +92,8 @@ typedef struct {
     // Pixel-position samples (dmsh_fetch.py 'frag_pos'): bit i: the i-th redirectable sample reads at (gl_FragCoord.x * U, gl_FragCoord.y * V), fc_scale[i] = {U, V} as uniform references
     // (slot << 16) | (vector 0..4095 << 2) | component; its fc_locn is 0xff
     uint32_t fc_fpos; uint32_t fc_scale[32][2];
+    // gmem_map's fixed pointer sources, read before argument-block reuse as well as a fresh encode (nvn_mtl.m gmem_discover).
+    uint8_t ngptr; struct { uint8_t reg; uint16_t off; } gptr[64];   // DMSH_GPTR_MAX, checked in nvn_refl.m
     uint8_t *c1;             // c1 constant segment as-is (B): c1_len bytes, malloc'd by nvn_refl_from_json (NULL without one). It was a 4 KB array; Hyrule Warriors: Age of Calamity has 6 KB segments (its soldiers' vertex shaders)
 } nvn_refl;
 

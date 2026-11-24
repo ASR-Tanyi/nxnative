@@ -68,9 +68,9 @@ def check_metal():   # --check-metal: the stop message, '' when the build may go
 def ios_target():   # as dmsh_build.py picks its targets: a Mac-only build (the NSP script's --platform mac / mac-app) compiles nothing for iOS
     return 'ios' in (os.environ.get('DMSH_TARGETS') or ('mac,ios' if os.environ.get('IOSOUT') else 'mac')).split(',')
 
-def check_tools():
+def check_tools(check_metal=True):
     bad, own = [], []
-    for b in strict():
+    for b in (strict() if check_metal else strict(False)):
         m = OWN.fullmatch(b)
         if m and mac15_compiler(m[1], m[3]):
             print(f'mac15 shader compiler: {m[3]} (M3 Max diagnostic: {MAC15_METAL})', flush=True)

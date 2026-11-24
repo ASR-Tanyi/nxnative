@@ -82,6 +82,9 @@ int nvn_refl_from_json(NSDictionary *j, nvn_refl *o, char *err, int errlen) {
             // The pools, indexed by the handle's IDs (nvn_refl.h TEXP / SAMPP): which texture is read is known only when the GPU runs the draw
             else if ([k isEqualToString:@DMSH_KIND_TEX_POOL]) { r->kind = NVN_RB_TEXP; dummy_kind(b[@"elem"], &r->dtt, &r->dpf); o->bindless = o->pool = 1; }
             else if ([k isEqualToString:@DMSH_KIND_SAMP_POOL]) { r->kind = NVN_RB_SAMPP; o->bindless = o->pool = 1; }
+            else if ([k isEqualToString:@DMSH_KIND_IMG_POOL]) { NSString *el_p = b[@"elem"]; r->kind = NVN_RB_IMGP; dummy_kind(el_p, &r->dtt, &r->dpf);
+                r->rw = [el_p isKindOfClass:[NSString class]] && ([el_p containsString:@"access::write"] || [el_p containsString:@"access::read_write"]);
+                o->bindless = o->pool = 1; }   // images indexed by the IDs the shader loads (img_pool_gpu)
             // A table of the handles in a uniform buffer (nvn_refl.h TEXH / SAMPH)
             else if ([k isEqualToString:@DMSH_KIND_TEX_HTAB] || [k isEqualToString:@DMSH_KIND_SAMP_HTAB]) { int samp = [k isEqualToString:@DMSH_KIND_SAMP_HTAB];
                 r->kind = samp ? NVN_RB_SAMPH : NVN_RB_TEXH; if (!samp) dummy_kind(b[@"elem"], &r->dtt, &r->dpf); r->off = (uint16_t)[b[@"off"] intValue]; o->bindless = o->htab = 1;
@@ -106,7 +109,18 @@ int nvn_refl_from_json(NSDictionary *j, nvn_refl *o, char *err, int errlen) {
             else if ([k isEqualToString:@DMSH_KIND_SBUF_PUSH]) { r->kind = NVN_RB_SBUFQ; r->rw = sbuf_rw(b); r->off = (uint16_t)[b[@"off"] intValue]; }
             else if ([k isEqualToString:@DMSH_KIND_GEOMETRY]) { if (reg < 0 || reg > 4) FAIL("invalid geometry helper slot"); r->kind = NVN_RB_GEOMETRY; }
             else if ([k isEqualToString:@DMSH_KIND_SUPPORT]) r->kind = NVN_RB_SUPPORT;
-            else if ([k isEqualToString:@DMSH_KIND_GMEM_MAP]) { r->kind = NVN_RB_GMEM; r->rw = [b[@"rw"] boolValue]; }
+            else if ([k isEqualToString:@DMSH_KIND_GMEM_MAP]) {
+                r->kind = NVN_RB_GMEM; r->rw = [b[@"rw"] boolValue];
+                _Static_assert(DMSH_GPTR_MAX == sizeof o->gptr / sizeof o->gptr[0], "nvn_refl.gptr must hold DMSH_GPTR_MAX sources");
+                id sources = b[@"pointers"];
+                if (sources && (![sources isKindOfClass:[NSArray class]] || [sources count] > DMSH_GPTR_MAX || o->ngptr)) FAIL("B binding %s: invalid or duplicate raw pointer sources", nm.UTF8String);
+                for (id e in sources) {
+                    if (![e isKindOfClass:[NSArray class]] || [e count] != 2 || ![e[0] isKindOfClass:[NSNumber class]] || ![e[1] isKindOfClass:[NSNumber class]]) FAIL("B binding %s: a raw pointer source is not [slot, byte]", nm.UTF8String);
+                    int sreg = [e[0] intValue], soff = [e[1] intValue];
+                    if (sreg < 0 || sreg >= 16 || soff < 0 || soff > 0xfff8) FAIL("B binding %s: raw pointer slot %d byte %d out of range", nm.UTF8String, sreg, soff);
+                    o->gptr[o->ngptr].reg = (uint8_t)sreg; o->gptr[o->ngptr].off = (uint16_t)soff; o->ngptr++;
+                }
+            }
             else if ([k isEqualToString:@DMSH_KIND_RT_SCENE]) r->kind = NVN_RB_RT_SCENE;
             else if ([k isEqualToString:@DMSH_KIND_RT_PARAMETERS]) r->kind = NVN_RB_RT_PARAMETERS;
             else if ([k isEqualToString:@DMSH_KIND_RT_ERRORS]) r->kind = NVN_RB_RT_ERRORS;
@@ -133,7 +147,7 @@ int nvn_refl_from_json(NSDictionary *j, nvn_refl *o, char *err, int errlen) {
                 r->tbx = (uint16_t)(x + 1); }
             id sx = b[@"sbx"];   // a bounded storage buffer's slot in the length table (dmsh_reflect.py; Ryujinx TranslationFlags.MetalStorageBounds)
             if (sx) { int x = [sx intValue];
-                if (x < 0 || x >= DMSH_SBLEN_SLOTS || (r->kind != NVN_RB_SBUFU && r->kind != NVN_RB_SBUFQ)) FAIL("B binding %s: length table slot %d of a binding that is not a storage buffer by address", nm.UTF8String, x);
+                if (x < 0 || x >= DMSH_SBLEN_SLOTS || (r->kind != NVN_RB_SBUFP && r->kind != NVN_RB_UBOP && r->kind != NVN_RB_SBUFU && r->kind != NVN_RB_SBUFQ)) FAIL("B binding %s: length table slot %d of a binding that is not a storage buffer", nm.UTF8String, x);
                 r->sbx = (uint8_t)(x + 1); }
             id bb = b[@"border_bit"];   // a twin sampler (dmsh_rewrite.py border_emu)
             if (bb) { int bit = [bb intValue]; if (bit < 0 || bit >= DMSH_BORDER_SAMPLERS || (r->kind != NVN_RB_SAMP && r->kind != NVN_RB_SAMPT && r->kind != NVN_RB_SAMPU && r->kind != NVN_RB_SAMPI) || r->n)
