@@ -153,6 +153,17 @@ class Main(Base):
             with self.assertRaises(Stop): nsp.main(args)
         return Path(seen['DM_ROOT']), said
 
+    def test_ocarina_mac15_selects_the_dump_profile_without_keys(self):
+        tid = 0x0400486024DEC000
+        with mock.patch.object(nsp, 'apple_silicon', return_value=True), mock.patch.object(nsp, 'mac15_target', return_value=True):
+            with self.assertRaisesRegex(nsp.BuildError, f'{TID:016X}'):
+                self.run_main('--platform', 'mac')
+            self.dump = self.dump.parent / 'ocarina'
+            version(self.dump / 'base', tid=tid)
+            version(self.dump / 'updates/131072', tid=tid)
+            work, _ = self.run_main('--platform', 'mac', '--package', 'v131072')
+            self.assertEqual(work, self.dump / f'{tid:016X}_build/mac15')
+
     def test_needs_no_keys_and_builds_beside_the_dump(self):
         work, said = self.run_main()
         self.assertEqual(work, self.dump / f'{TID:016X}_build')

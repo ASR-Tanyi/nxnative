@@ -2,6 +2,8 @@
 
 A Switch 2 game: update 1.1.1 (v131072), SDK 22.2.8 (`Ounce`). Nintendo EPD's engine (sead, agl, gsys, Havok, CRIWARE; project `Owl`, with Tears of the Kingdom's file layout) on NVN2. Modules `main`, `subsdk0` (NintendoSDK_movie) and `sdk`; the rewriter's patches are a frame-step stub and one cut ([`patches.py`](patches.py)). Status: plays on the Mac through the title, the opening, a new file's first scene, Link's house and Kokiri Forest, with saves, at about 59 fps with the picture close to console video.
 
+The `mac15` branch also accepts a NUP or extracted dump for this title with `--platform mac` on Apple silicon, macOS 15.6+ and Xcode 26.x. A build and gameplay check on Sequoia are pending for update 1.1.1. [Sequoia build and mesh check](../../../docs/mac15.md#ocarina-of-time-on-switch-2)
+
 ## What it needs
 
 | Setting | Where | Why |

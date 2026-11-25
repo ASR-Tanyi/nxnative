@@ -46,14 +46,24 @@ registration-asan: t_registration_asan
 # Keep the binary and host headers apart from the Metal 4 test build.
 ifeq ($(DM_MAC15),1)
 MAC15_REPLAY = $(TEST_GEN)/$(GAME)/t_rt_unbind
+MAC15_MESH = $(TEST_GEN)/$(GAME)/t_mesh_first_use
+MAC15_TEST_CC = xcrun --sdk macosx clang $(filter-out -g,$(CFLAGS)) -arch arm64 -mmacosx-version-min=$(MAC15_MIN) -DDM_MAC15=1 -fobjc-arc
 $(MAC15_REPLAY): t_rt_unbind.m $(MTL_T_DEP) Makefile
-	xcrun --sdk macosx clang $(filter-out -g,$(CFLAGS)) -arch arm64 -mmacosx-version-min=$(MAC15_MIN) -DDM_MAC15=1 -fobjc-arc -o $@.partial t_rt_unbind.m $(MTL_T_SRC) $(FW) -lcompression
+	$(MAC15_TEST_CC) -o $@.partial t_rt_unbind.m $(MTL_T_SRC) $(FW) -lcompression
 	mv $@.partial $@
 .PHONY: mac15_replay check_mac15_replay
 mac15_replay: $(MAC15_REPLAY)
 check_mac15_replay: mac15_replay
 	MTL_DEBUG_LAYER=0 $(MAC15_REPLAY)
 	MTL_DEBUG_LAYER=1 $(MAC15_REPLAY)
+# The NVN2 mesh fixture includes hle_nvn.c itself to exercise the public task/mesh draw entry points.
+$(MAC15_MESH): t_mesh_first_use.m $(MTL_T_DEP) Makefile
+	$(MAC15_TEST_CC) -o $@.partial t_mesh_first_use.m $(filter-out ../nvn/hle_nvn.c,$(MTL_T_SRC)) $(FW) -lcompression
+	mv $@.partial $@
+.PHONY: check_mac15_mesh
+check_mac15_mesh: $(MAC15_MESH)
+	MTL_DEBUG_LAYER=0 $(MAC15_MESH)
+	MTL_DEBUG_LAYER=1 $(MAC15_MESH)
 endif
 
 t_rt_unbind: t_rt_unbind.m $(MTL_T_DEP)

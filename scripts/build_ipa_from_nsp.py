@@ -1816,20 +1816,27 @@ def decoder_host_key(host):
     return None
 
 
-def mac15_target(platform, version, dump, xcode_version):
-    """Select the Sequoia BOTW port only on an actual 15.x Mac."""
+def mac15_target(platform, version, xcode_version):
+    """Select the Metal 3 toolchain on Sequoia. The scanned title determines which inputs it supports."""
     if version.split('.')[:1] != ['15']: return False
     if tuple(map(int, version.split('.')[:2])) < (15, 6): raise BuildError('the mac15 target requires macOS 15.6 or later')
-    if platform != 'mac' or dump: raise BuildError('macOS 15 supports the original Switch BOTW NSP with --platform mac')
+    if platform != 'mac': raise BuildError('on macOS 15, select --platform mac for the Metal 3 host')
     if not re.match(r'^Xcode 26(?:\.|$)', xcode_version().partition('\n')[0]):
         raise BuildError('the mac15 target requires Xcode 26.x selected with xcode-select or DEVELOPER_DIR')
     return True
 
 
-def mac15_packages(app, fam):
-    paths = [fam['base'], *(p for _, p in fam['updates']), *(p for _, _, p in fam['dlc'])]
-    if app != 0x01007EF00011E000 or not paths[0] or any(Path(p).suffix.lower() != '.nsp' for p in paths):
-        raise BuildError('macOS 15 supports the original Switch BOTW base NSP (01007EF00011E000) and its update and DLC NSPs')
+def mac15_packages(app, fam, games):
+    # Check the registered title before extraction or derivation, even when a build uses --provisional.
+    profile = games.HERE / f'{app:016X}'
+    formats = games.Game(profile).words('mac15_inputs', '') if (profile / 'game.tsv').is_file() else []
+    kind = 'nup' if 'nup' in fam else 'dump' if fam.get('dump') else 'nsp'
+    if not formats: raise BuildError(f'macOS 15 has no Metal 3 profile for title {app:016X} (see docs/mac15.md)')
+    if kind not in formats: raise BuildError(f'macOS 15 input for {app:016X} must be {" or ".join(formats)} (received {kind})')
+    if kind == 'nsp':
+        paths = [fam['base'], *(p for _, p in fam['updates']), *(p for _, _, p in fam['dlc'])]
+        if not paths[0] or any(Path(p).suffix.lower() != '.nsp' for p in paths):
+            raise BuildError(f'macOS 15 requires the base NSP for {app:016X} and any updates or DLC in NSP format')
 
 
 def build_mac_host(repo, out, env, logs, g):
@@ -3524,10 +3531,10 @@ def main(args=None):
     def selected_xcode():
         try: return subprocess.run(['xcodebuild', '-version'], env=env, capture_output=True, text=True, check=True).stdout
         except (OSError, subprocess.CalledProcessError) as e: raise BuildError(f'cannot identify the selected Xcode: {e}') from e
-    mac15 = mac15_target(platform, host_platform.mac_ver()[0], dump, selected_xcode)
+    mac15 = mac15_target(platform, host_platform.mac_ver()[0], selected_xcode)
     if mac15:
         env['DM_MAC15'] = '1'
-        say('mac15: original Switch BOTW, Metal 3, deployment target macOS 15.6')
+        say('mac15: Metal 3, deployment target macOS 15.6')
     env.setdefault('USER', getpass.getuser())   # xcodegen fails without USER (Couldn't find current username)
     env.setdefault('J', str(os.cpu_count() or 8))   # shader_split.py's and dmsh_build.py's workers (their default is 8)
     py = sys.executable
@@ -3551,11 +3558,16 @@ def main(args=None):
     else:
         with package_reader(repo, keys, env) as packages:
             app, fam = scan_nsps(nsp_dir, packages.contents, int(want, 16) if want else None)
-            if mac15: mac15_packages(app + PROGRAM_INDEX, fam)
+            if mac15: mac15_packages(app + PROGRAM_INDEX, fam, gamemod)
             packages.check_keys(fam)
         if PROGRAM_INDEX:   # one program of a multi-program application, packed as a game of its own: its title ID names the profile and the build folder
             app += PROGRAM_INDEX; say(f'program {PROGRAM_INDEX} of the application: title ID {app:016X}')
         fam = decompress_nsz(nsp_dir, app, fam, keys, env, work_dir(args))
+    if dump and mac15:
+        try: mac15_packages(app, fam, gamemod)
+        except BuildError:
+            if nup: fam['nup'].close()
+            raise
     force =args.provisional or PROVISIONAL   # a provisional profile even when dm/games has one (testing the guesses)
     own = own_profile_folders(args, nsp_dir, app)   # this script's own provisional and derived profiles: never taken as registered ones, wherever DM_GAMES_DIR puts them
     g, provisional, shadowed = None if force else gamemod.by_title(app, own), False, False

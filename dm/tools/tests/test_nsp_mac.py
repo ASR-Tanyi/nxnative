@@ -14,6 +14,9 @@ import unittest
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO / 'dm/games'))
+import game
+
 SCRIPT = REPO / 'scripts/build_ipa_from_nsp.py'
 spec = importlib.util.spec_from_file_location('build_ipa_from_nsp', SCRIPT)
 nsp = importlib.util.module_from_spec(spec); spec.loader.exec_module(nsp)
@@ -22,19 +25,26 @@ LIVE, OLD, NEW = 'a' * 64, 'b' * 64, 'c' * 64
 
 
 class Mac15Selection(unittest.TestCase):
-    def test_original_switch_nsp_and_xcode(self):
-        self.assertTrue(nsp.mac15_target('mac', '15.7.5', None, lambda: 'Xcode 26.3\nBuild version 17C529'))
-        self.assertFalse(nsp.mac15_target('mac', '26.6', None, lambda: self.fail('unexpected Xcode probe')))
-        for target, os_version, fmt, xcode in [('mac-app', '15.7', None, '26.3'), ('ios', '15.6', None, '26.0'),
-                                              ('mac', '15.5', None, '26.0'), ('mac', '15.7', 'nup', '26.3'),
-                                              ('mac', '15.6', None, '27.0'), ('mac', '15.6', None, '')]:
-            with self.subTest(target=target, version=os_version, format=fmt, xcode=xcode), self.assertRaises(nsp.BuildError):
-                nsp.mac15_target(target, os_version, fmt, lambda v=xcode: f'Xcode {v}')
+    def test_sequoia_toolchain(self):
+        self.assertTrue(nsp.mac15_target('mac', '15.7.5', lambda: 'Xcode 26.3\nBuild version 17C529'))
+        self.assertFalse(nsp.mac15_target('mac', '26.6', lambda: self.fail('unexpected Xcode probe')))
+        for target, version, xcode in [('mac-app', '15.7', '26.3'), ('ios', '15.6', '26.0'), ('mac', '15.5', '26.0'),
+                                       ('mac', '15.6', '27.0'), ('mac', '15.6', '')]:
+            with self.subTest(target=target, version=version, xcode=xcode), self.assertRaises(nsp.BuildError):
+                nsp.mac15_target(target, version, lambda: f'Xcode {xcode}')
+
+    def test_registered_formats_and_program_ids(self):
+        botw, oot = 0x01007EF00011E000, 0x0400486024DEC000
         fam = {'base': Path('base.NSP'), 'updates': [(1, Path('update.nsp'))], 'dlc': [(2, 3, Path('dlc.nsp'))]}
-        botw = 0x01007EF00011E000
-        nsp.mac15_packages(botw, fam)
-        for app, packages in [(botw + 1, fam), (botw, dict(fam, base=None)), (botw, dict(fam, updates=[(1, Path('game.nsz'))]))]:
-            with self.assertRaises(nsp.BuildError): nsp.mac15_packages(app, packages)
+        nup = {'nup': object(), 'base': None, 'updates': [(131072, object())], 'dlc': []}
+        dump = {'dump': True, 'base': Path('base'), 'updates': [], 'dlc': []}
+        for title, inputs in [(botw, fam), (oot, nup), (oot, dump)]:
+            nsp.mac15_packages(title, inputs, game)
+        for title, inputs in [(botw + 1, fam), (oot + 1, nup), (0x040074A01BF12000, dump),
+                              (botw, nup), (botw, dump), (oot, fam), (botw, dict(fam, base=None)),
+                              (botw, dict(fam, updates=[(1, Path('game.nsz'))]))]:
+            with self.subTest(title=f'{title:016X}', inputs=inputs), self.assertRaises(nsp.BuildError):
+                nsp.mac15_packages(title, inputs, game)
 
 
 class Base(unittest.TestCase):

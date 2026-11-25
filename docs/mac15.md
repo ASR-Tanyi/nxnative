@@ -1,9 +1,11 @@
-# BOTW on macOS 15 with Xcode 26
+# Breath of the Wild and Ocarina of Time on macOS 15 with Xcode 26
 
 An original Switch Breath of the Wild NSP built on an M3 Max using the
 `mac15` Metal 3 host. The game loaded its shader library and finished
 prewarming. The first reported run aborted when the NVN queue signaled its
 submission fence. The player confirmed BOTW runs after the shared-event fix.
+The Switch 2 Ocarina of Time profile is enabled for the same host. Its game
+build and gameplay still need verification on Sequoia.
 
 ## Build on the target Mac
 
@@ -29,7 +31,9 @@ handles, and direct and indirect indexed draws. A mixed compute/copy pass
 checks GPU-written bytes after switching native encoders and changing a table
 binding. The check exercises both the driver and the Metal API validation layer.
 
-Then build with the ordinary NSP command, substituting the paths on your Mac.
+### Breath of the Wild on original Switch
+
+Build with the NSP command, substituting the paths on your Mac.
 
 ```sh
 python3 scripts/build_ipa_from_nsp.py "/path/to/BOTW NSPs" -k "/path/to/prod.keys" --platform mac
@@ -40,12 +44,30 @@ optional DLC NSPs. The registered profile covers update 1.9.0. The builder
 checks the profile and module build IDs before applying version-specific
 patches. [BOTW profile](../dm/games/01007EF00011E000/README.md)
 
+### Ocarina of Time on Switch 2
+
+Use your NUP for title `0400486024DEC000` with update 1.1.1 (`v131072`). The command also accepts an extracted dump folder containing the base game and that update. Both formats work without `prod.keys`. [Dump folder layout](../README.md#switch-2-games)
+
+```sh
+python3 scripts/build_ipa_from_nsp.py "/path/to/Ocarina of Time.nup" --platform mac --package v131072
+```
+
+The default build compiles the full shader map. For a shorter first build, add `--seen-shaders` to compile the shaders recorded during upstream playtests. A scene that uses additional shaders can have missing draws with that option. [Ocarina of Time shaders](../dm/games/0400486024DEC000/README.md#shaders)
+
+To exercise the game's graphics path before building, run the game-file-free check for its title ID. It draws through NVN2 with task payloads, checks depth and colour values, and verifies direct and indirect mesh draws across 3,072 workgroups with Metal validation off and on.
+
+```sh
+python3 scripts/check_mac15.py --game 0400486024DEC000 --out oot-mac15-check.log
+```
+
+### Launch and controls
+
 The script selects Metal 3 on Sequoia, builds the game libraries as MSL 3.2
 for 15.6 and prints the launch command. Build output is under the usual
 game build folder's `mac15/` subdirectory. Its `logs/dmsh_build.log` records
 shader compilation and `logs/mac_host_build.log` records the host build. The
-run directory and saves also live under `mac15/`. Only the `mac` platform
-with original Switch BOTW NSPs is enabled on Sequoia.
+run directory and saves also live under `mac15/`. For Ocarina of Time the
+default run log is `0400486024DEC000_build/mac15/run/host.log` under the game folder.
 
 Press **⌘,** to open **Controls → Controller Mapping…** and choose **Keyboard + Mouse**.
 Click a controller button or stick direction, then press the key you want for it.

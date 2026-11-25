@@ -25,6 +25,10 @@ static NvShader *shader(id<MTLLibrary> library, NSString *name, int stage) {
 }
 int main(void) { @autoreleasepool {
     mtl_init(); NSError *error = nil;
+    MTLCompileOptions *options = nil;
+#if DM_MAC15
+    options = [MTLCompileOptions new]; options.languageVersion = MTLLanguageVersion3_2;
+#endif
     id<MTLLibrary> library = [g_dev newLibraryWithSource:@"#include <metal_stdlib>\nusing namespace metal;\n"
         "struct V { float4 position [[position]]; }; struct Payload { uint first; }; struct Block { uint first; };\n"
         "using Mesh = metal::mesh<V, void, 3, 1, metal::topology::triangle>;\n"
@@ -47,7 +51,7 @@ int main(void) { @autoreleasepool {
         "[[mesh]] void tasked(Mesh m, const object_data Payload& p [[payload]], uint tid [[thread_index_in_threadgroup]]) { if (!tid) triangle(m, p.first); }\n"
         "vertex float4 vertex_only(uint vid [[vertex_id]]) { const float2 p[] = {float2(-1,-1),float2(3,-1),float2(-1,3)}; return float4(p[vid % 3], float(vid / 3 + 1) * 0.125f, 1); }\n"
         "fragment float4 color() { return float4(0,1,0,1); }\n"
-        options:nil error:&error];
+        options:options error:&error];
     if (!library) fprintf(stderr, "%s\n", error.localizedDescription.UTF8String);
     require(library != nil, "synthetic task and mesh shaders compile");
     NvShader *ms = shader(library, @"direct", 4), *tasked = shader(library, @"tasked", 4), *ts = shader(library, @"task", 3), *fs = shader(library, @"color", 1);

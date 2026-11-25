@@ -976,7 +976,7 @@ class Main(Base):
                 self.assertEqual(app.call_args.args[2], expected)
                 self.assertFalse((self.dir / f'{tid:016X}_build/extract/v0').exists())
 
-    def run_main(self, target, *, extract=False, package=None):
+    def run_main(self, target, *, extract=False, package=None, platform=None):
         seen, said = {}, []
         def stop(env, *a):
             seen.update(env)
@@ -985,8 +985,21 @@ class Main(Base):
              mock.patch.object(nsp, 'check_prereqs', side_effect=stop), mock.patch.object(nsp, 'say', side_effect=said.append), \
              mock.patch.object(nsp, 'check_versions_aarch64', side_effect=Stop), \
              mock.patch.object(nsp, 'ask', side_effect=AssertionError('asked for something')), mock.patch.object(nsp, 'package_reader', side_effect=AssertionError('read a package')):
-            with self.assertRaises(Stop): nsp.main(nsp.parse_args([str(target)] + (['--package', package] if package else [])))
+            args = [str(target)] + (['--package', package] if package else []) + (['--platform', platform] if platform else [])
+            with self.assertRaises(Stop): nsp.main(nsp.parse_args(args))
         return Path(seen['DM_ROOT']), said
+
+    def test_ocarina_mac15_extracts_the_selected_update_without_keys(self):
+        tid, ver = 0x0400486024DEC000, 131072
+        write_nup(self.path, [(1, tid, ver, version(main=b'ocarina', tid=tid), META)], update_flags=pack_nup.STANDALONE)
+        with mock.patch.object(nsp, 'apple_silicon', return_value=True), mock.patch.object(nsp, 'mac15_target', return_value=True):
+            for target in (self.path, self.dir):
+                work, _ = self.run_main(target, extract=True, package=f'v{ver}', platform='mac')
+                self.assertEqual(work, self.dir / f'{tid:016X}_build/mac15')
+                self.assertEqual((work / f'extract/v{ver}/ExeFS/main').read_bytes(), b'ocarina')
+            write_nup(self.path, [(1, TID, VER, version(), META)], update_flags=pack_nup.STANDALONE)
+            with self.assertRaisesRegex(nsp.BuildError, f'{TID:016X}'):
+                self.run_main(self.path, platform='mac')
 
     def test_needs_no_keys_and_builds_beside_the_nup(self):
         for target in (self.dir, self.path):

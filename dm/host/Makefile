@@ -11,8 +11,10 @@ GEN = gen
 HOST_CC = clang
 HOST_DSYM = dsymutil
 ifeq ($(DM_MAC15),1)
-ifneq ($(GAME),01007EF00011E000)
-$(error DM_MAC15 requires the original Switch BOTW profile 01007EF00011E000)
+ifneq ($(strip $(GAME)),)
+ifeq ($(strip $(shell "$(PYTHON)" ../games/game.py "../games/$(GAME)" mac15_inputs '')),)
+$(error game profile $(GAME) has no mac15_inputs for the Metal 3 host)
+endif
 endif
 MACOS_MIN := $(MAC15_MIN)
 HOST_CC := xcrun --sdk macosx clang

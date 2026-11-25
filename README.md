@@ -43,7 +43,7 @@ Community projects build on nxnative with tools to turn your games into apps for
 
 ## Requirements
 
-The `mac15` branch adds an experimental Metal 3 build for original Switch BOTW NSPs on Apple silicon, macOS 15.6+ within Sequoia and Xcode 26.x. The original port ran BOTW on an M3 Max with macOS 15.7.5. [Build and replay check](docs/mac15.md)
+On Apple silicon with macOS 15.6+ within Sequoia and Xcode 26.x, the `mac15` branch builds original Switch Breath of the Wild from NSPs and the Switch 2 Ocarina of Time from a NUP or extracted dump. BOTW has run on an M3 Max. Ocarina of Time is experimental on Sequoia. [Build commands and Metal 3 checks](docs/mac15.md)
 
 - **Mac:** Apple silicon, macOS 26.6 or later. Building games requires Xcode 27.2.
 - **iPhone:** A17 Pro chip or later, with iOS 26 or later.

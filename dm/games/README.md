@@ -276,6 +276,7 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | Key | Meaning |
 |---|---|
 | `title_id`, `program_id` | Identity. `program_id` is what `svcGetInfo(ProgramId)` reports. The game's name is not stored: the NSP script reads it from the NSP's control data (NACP) |
+| `mac15_inputs` | Input formats enabled for this title with `--platform mac` on macOS 15.6–15.x (`nsp`, `nup` or `dump`). The host build and the package reader use the registered profile. |
 | `name` | The game's name, only a label for `game.py list`, error messages and the Mac window title. The iOS app's name is the game name in the base NSP's control data and its bundle ID is `org.nxnative.<title ID in lowercase>`; the NSP script's `APP_NAME` / `BUNDLE_ID` and `build_ipa.sh`'s `DM_DISPLAY_NAME` / `DM_BUNDLE_ID` override them |
 | `ipa`, `app_category` | iOS app: the default IPA file name and the App Store category |
 | `build <ver> <display version> <module>=<build ID>…` | One row per version the game was brought up on. The NSP script builds any version (the base game alone, any update): a registered one from the profile as it is, any other from a profile derived from it (`<id>_build/profile`: the same keys, that version's own shader tables; `derive_profile`), with a red line naming the modules whose build no row registers, which the per-build cuts and host fixes do not reach. The host reports the display version by `main`'s build ID |

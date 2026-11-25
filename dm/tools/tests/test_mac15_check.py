@@ -55,6 +55,16 @@ class Mac15Check(unittest.TestCase):
             self.assertEqual(layers, ['0', '1'])
         self.assertFalse(Path(commands[-2][0]).exists())   # temporary build is removed
 
+    def test_ocarina_adds_mesh_readback_to_replay(self):
+        with self.run_commands(), redirect_stdout(io.StringIO()):
+            self.assertEqual(check.main(['--game', check.OCARINA]), 0)
+        builds = [cmd for cmd, _ in self.calls if cmd[0] == 'make']
+        self.assertEqual([cmd[-1] for cmd in builds], ['check_mac15_replay', 'check_mac15_mesh'])
+        self.assertTrue(all('GAME=' + check.OCARINA in cmd for cmd in builds))
+        with self.run_commands(fail='check_mac15_mesh'), self.assertRaises(check.CheckError):
+            check.check(REPO, self.messages.append, check.OCARINA)
+        self.assertFalse(any(m.startswith('PASS:') for m in self.messages))
+
     def test_wrong_host_stops_without_launching_any_tools(self):
         for system, machine in [('Linux', 'aarch64'), ('Darwin', 'x86_64')]:
             with self.subTest(system=system, machine=machine), \

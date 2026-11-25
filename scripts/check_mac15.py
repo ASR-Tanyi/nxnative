@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Check mac15 prerequisites, Metal 3 and the production NVN replay without game files.
 
-This is a bring-up diagnostic, not a game build or a declaration of BOTW support.
-The NVN fixture submits recorded operations through the host and verifies GPU pixels.
+The NVN fixtures submit recorded operations through the host and verify GPU pixels.
+The Ocarina of Time profile also checks task and mesh draws.
 """
 import argparse
 from contextlib import ExitStack
@@ -16,6 +16,8 @@ import tempfile
 
 REPO = Path(__file__).resolve().parents[1]
 MACOS_MIN = '15.6'
+BOTW = '01007EF00011E000'
+OCARINA = '0400486024DEC000'
 
 
 class CheckError(Exception):
@@ -56,9 +58,9 @@ def metal_check(name, shader, sources, work, emit):
         run([binary, library], emit, env={**os.environ, 'MTL_DEBUG_LAYER': layer})
 
 
-def check(repo, emit):
+def check(repo, emit, game=BOTW):
     emit('mac15 prerequisite, backend and NVN replay check: Apple silicon, macOS 15.6+, Xcode 26.x')
-    emit('The final fixture checks the production NVN replay. BOTW NSP validation is separate.')
+    emit(f'Testing the production NVN replay for {game}.')
     if platform.system() != 'Darwin':
         raise CheckError('run this check on your Mac; Apple SDKs and a Metal GPU are required')
     if platform.machine() != 'arm64':
@@ -95,13 +97,17 @@ def check(repo, emit):
         run([work / 'range'], emit)
         metal_check('backend', tests / 'mtl3_backend.metal',
                     [tests / 't_mtl3_backend.m', repo / 'dm/gfx/nvn/nvn_mtl3.m'], work, emit)
-    run(['make', '-C', tests, 'GAME=01007EF00011E000', 'DM_MAC15=1', 'check_mac15_replay'],
-        emit, timeout=1200)
-    emit('PASS: prerequisites, Metal 3 backend and NVN replay readback. BOTW gameplay needs a separate NSP run.')
+    run(['make', '-C', tests, f'GAME={game}', 'DM_MAC15=1', 'check_mac15_replay'], emit, timeout=1200)
+    if game == OCARINA:
+        run(['make', '-C', tests, f'GAME={game}', 'DM_MAC15=1', 'check_mac15_mesh'], emit, timeout=1200)
+        emit('PASS: Ocarina of Time task and mesh draw readbacks.')
+    emit('PASS: prerequisites, Metal 3 backend and NVN replay readback. Gameplay needs a separate game run.')
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--game', choices=(BOTW, OCARINA), default=BOTW,
+                        help=f'title ID to check (default BOTW; use {OCARINA} for Ocarina of Time)')
     parser.add_argument('--out', type=Path, help='also write the complete check log to this file')
     args = parser.parse_args(argv)
     try:
@@ -119,7 +125,7 @@ def main(argv=None):
                     log.flush()
 
             try:
-                check(REPO, emit)
+                check(REPO, emit, args.game)
             except (CheckError, OSError) as error:
                 emit(f'[RED] mac15 check: {error}')
                 return 1
