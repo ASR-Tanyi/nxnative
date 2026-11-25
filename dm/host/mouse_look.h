@@ -11,22 +11,23 @@ typedef struct {
     int32_t rx, ry;
 } mouse_look;
 
+static inline unsigned mouse_look_button(unsigned button, int option, int control) {
+    if (button == MOUSE_LEFT && option) return MOUSE_MIDDLE;
+    if (button == MOUSE_LEFT && control) return MOUSE_RIGHT;
+    return button;
+}
 static inline void mouse_look_click(mouse_look *m, unsigned button, int down, int option, int control,
                                    const uint64_t bindings[MOUSE_BUTTONS]) {
-    if (button >= MOUSE_BUTTONS) return;
-    unsigned binding = button;
-    if (button == MOUSE_LEFT && option) binding = MOUSE_MIDDLE;
-    else if (button == MOUSE_LEFT && control) binding = MOUSE_RIGHT;
-    m->pressed[button] = down ? bindings[binding] : 0;
+    if (button < MOUSE_BUTTONS) m->pressed[button] = down ? bindings[mouse_look_button(button, option, control)] : 0;
 }
 
 static inline uint64_t mouse_look_buttons(const mouse_look *m) {
     return m->pressed[MOUSE_LEFT] | m->pressed[MOUSE_RIGHT] | m->pressed[MOUSE_MIDDLE];
 }
 
-static inline void mouse_look_merge(const mouse_look *m, uint64_t *buttons, int32_t *rx, int32_t *ry) {
-    *buttons |= mouse_look_buttons(m);
-    // A Shift-arrow supplies full tilt. Mouse movement can still supply the other axis.
+static inline void mouse_look_axes(const mouse_look *m, int combined, int32_t *rx, int32_t *ry) {
+    // In the combined layout a moving pointer owns both right-stick axes. Keys can look while it is still.
+    if (combined && (m->rx || m->ry)) { *rx = m->rx; *ry = m->ry; return; }
     if (!*rx) *rx = m->rx;
     if (!*ry) *ry = m->ry;
 }

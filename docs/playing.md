@@ -76,7 +76,9 @@ Joy-Con 2 and the Pro Controller 2 do not appear in macOS's Bluetooth settings: 
 
 ### Mouse and trackpad
 
-With the game window active, choose **Controls → Mouse Look** or press **Command–Shift–M**. Move the mouse or slide one finger on the trackpad to turn the camera. WASD still moves the character. Press **Escape** to release the pointer and use the left click as a touchscreen tap again. Switching windows also releases it.
+Choose **Controls → Keyboard Layout → Keyboard + Mouse** to use the mouse or trackpad as the right stick whenever the game window is active. Move the mouse or slide one finger on the trackpad to turn the camera. **Escape** releases the pointer so you can use the menus. Click the game picture to resume. Switching windows also releases the pointer.
+
+With the default **Follow Mouse Look** layout, **Command–Shift–M** turns mouse look on. Press **Escape** to return to Classic controls and use left click as a touchscreen tap.
 
 | Input | Default Switch control | Breath of the Wild |
 |---|---|---|
@@ -85,13 +87,21 @@ With the game window active, choose **Controls → Mouse Look** or press **Comma
 | Middle click or Option–click | RS (right stick press) | Open the scope |
 | Right click, secondary trackpad click or Control–click | ZR | Hold to aim the bow, release to shoot |
 
-To remap a click, press **Escape**, then choose **Controls → Left Click**, **Middle Click** or **Right Click** and select a Switch button or **None**. For example, choose **Right Click → ZL** to guard or lock on. **Controls → Camera Sensitivity** offers 50%, 100% and 200%. The Mac remembers the bindings and sensitivity for each game. Press **Command–Shift–M** to resume mouse look.
+Use **Controls → Controller Mapping…** to bind a click to a controller input. The **Left Click**, **Middle Click** and **Right Click** menus also offer shortcuts to the Switch buttons. For example, choose **Right Click → ZL** to guard or lock on. **Controls → Camera Sensitivity** offers 50%, 100% and 200%.
 
 With mouse look off, the pointer hides when you press a game key or controller button, or move a stick, while it is over the game picture. Moving the mouse shows it again, as does switching to another window or app.
 
 ### Keyboard and mouse layout
 
-Press **Command–Shift–M** in the game window to turn on Mouse Look. The default **Controls → Keyboard Layout → Follow Mouse Look** puts the action keys around WASD while the pointer is captured. **Escape** releases the pointer and restores the Classic keys. Choose **Keyboard + Mouse** or **Classic** in that menu to keep one layout active. The host remembers the choice for each game.
+Open **Controls → Controller Mapping…** (**⌘,**) and choose the play mode you want to edit. **Keyboard + Mouse** keeps the action keys around WASD. **Classic** has its own bindings. **Follow Mouse Look** uses the layout that matches whether the pointer is captured.
+
+1. Click a controller button, stick direction, or action such as **Sprint**. The **Assigned inputs** menu shows its current bindings. Hover over a control to see all its bindings.
+2. Press a new key or **Shift + key** to replace the selected binding. To bind **Shift**, **Control** or **Option** by itself, press and release it. For a mouse button, click the binding area with the desired button. A secondary trackpad click works there too. An input already assigned to another control moves to the selected control.
+3. Choose **Add binding…** in **Assigned inputs** to keep the existing keys and add another. **Remove** clears the selected binding. **Reset Control** restores the selected control's defaults. **Reset All Bindings…** restores both keyboard layouts and the three clicks for this game.
+
+Changes take effect immediately and load on the next run. The Mac stores the profile in `controls-<title ID>.tsv` beside the game's `save` folder. Copy it with the save to carry the mappings, play mode and camera sensitivity to another Mac. In **Keyboard + Mouse**, moving the pointer always drives the right stick, including when you have assigned keys to the stick directions.
+
+BOTW starts with these bindings in **Keyboard + Mouse**.
 
 | Key in Keyboard + Mouse | Switch input | BOTW with its default jump button |
 |---|---|---|

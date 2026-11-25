@@ -47,11 +47,14 @@ shader compilation and `logs/mac_host_build.log` records the host build. The
 run directory and saves also live under `mac15/`. Only the `mac` platform
 with original Switch BOTW NSPs is enabled on Sequoia.
 
-With the default keyboard setting, **Command–Shift–M** enables the mouse or
-trackpad camera and the WASD action layout. Hold **Shift** to sprint while moving, press **Space**
-to jump, **E** to interact and **Q** to guard. **Escape** releases the pointer.
-The **Controls** menu remembers your keyboard layout, click bindings and camera
-sensitivity for BOTW. [Full keyboard map](playing.md#keyboard-and-mouse-layout) · [Mouse and trackpad controls](playing.md#mouse-and-trackpad)
+Press **⌘,** to open **Controls → Controller Mapping…** and choose **Keyboard + Mouse**.
+Click a controller button or stick direction, then press the key you want for it.
+Mouse or trackpad motion always drives the right stick in this mode. **Escape** releases
+the pointer for the menus. Click the game picture to resume.
+
+BOTW saves changes in `mac15/run/controls-01007EF00011E000.tsv` inside its build folder
+and reads them on launch. Copy that file alongside the `save` folder to take your controls
+with you. [Bindings, mouse clicks and resets](playing.md#keyboard-and-mouse-layout) · [Default mouse controls](playing.md#mouse-and-trackpad)
 
 ## Renderer and cache behavior
 

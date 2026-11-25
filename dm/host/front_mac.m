@@ -16,7 +16,7 @@
 #include "dm.h"
 #include "front_role.h"
 #include "dm_input.h"
-#include "keyboard_mac.h"
+#import "controller_mapping_mac.h"
 #include "mouse_look.h"
 #include "front.h"
 #include "hle.h"
@@ -44,11 +44,11 @@ static void merge_rumble_to(void (*sink)(const dm_haptic_state *));
 
 static CAMetalLayer *g_layer;
 static mac_keyboard g_keyboard;
-static mac_key_preset g_keyboard_preset;
+static mac_controls g_controls;
+static BOOL g_capture_on_focus;
+static void resume_mouse_capture(void);
 static int g_input_on = 1;   // main thread: the game window is key, so its keyboard, mouse and controllers reach the game (input_release / input_resume)
 static mouse_look g_mouse_look;
-static uint64_t g_mouse_bindings[MOUSE_BUTTONS];
-static double g_mouse_sensitivity = 1.0;
 static NSTimer *g_mouse_timer;   // active only while the pointer is captured
 static void mouse_look_release(void);
 
@@ -240,12 +240,12 @@ static void cursor_hide_for_input(void) {
     if (NSPointInRect([v convertPoint:g_win.mouseLocationOutsideOfEventStream fromView:nil], v.bounds)) [NSCursor setHiddenUntilMouseMoves:YES];
 }
 static void push(void) {
-    mac_key_report r = mac_keys_read(&g_keyboard);
-    mouse_look_merge(&g_mouse_look, &r.buttons, &r.rx, &r.ry);
+    mac_key_report r = mac_keys_read(&g_keyboard, mouse_look_buttons(&g_mouse_look));
+    mouse_look_axes(&g_mouse_look, g_keyboard.mouse_layout, &r.rx, &r.ry);
     dm_input_set(r.buttons, r.lx, r.ly, r.rx, r.ry);
 }
 static void keyboard_layout_apply(void) {
-    mac_keys_layout(&g_keyboard, g_keyboard_preset, g_mouse_timer != nil);
+    mac_keys_layout(&g_keyboard, g_controls.preset, g_mouse_timer != nil);
     push();
 }
 static void keyboard_release(void) {
@@ -265,9 +265,12 @@ static void on_key(NSEvent *e, int down) {
     unsigned short c = e.keyCode;
     if (cp_blocks_input(g_cp.phase)) {   // accept both layouts' confirm/cancel keys even after the prompt releases capture
         if (down && g_cp.phase == CP_OPEN) {
-            uint64_t action = mac_key_binding(c, true, false);
+            BOOL shifted = (e.modifierFlags & NSEventModifierFlagShift) != 0;
+            uint64_t action = mac_key_binding(&g_controls, c, g_keyboard.mouse_layout, shifted);
+            if (g_controls.preset == MAC_KEYS_AUTO && action != DM_BTN_A && action != DM_BTN_B)
+                action = mac_key_binding(&g_controls, c, !g_keyboard.mouse_layout, shifted);
             if (c == 53 || action == DM_BTN_B) g_cp_cancel = 1;
-            else if (action == DM_BTN_A) g_cp_confirm = 1;
+            else if (c == 36 || action == DM_BTN_A) g_cp_confirm = 1;
             cp_poll();
         }
         return;
@@ -487,6 +490,8 @@ static void input_release(void) {
 static void input_resume(void) {
     display_awake(1);
     g_input_on = 1;
+    if (g_controls.preset == MAC_KEYS_MOUSE) g_capture_on_focus = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{ resume_mouse_capture(); });
     dm_motion_pro_active(1);
     dm_switch2_active(1); dm_jc1_active(1);
     pads_reread();
@@ -895,10 +900,13 @@ static void mouse_look_capture(void) {
     g_mouse_timer = [NSTimer timerWithTimeInterval:interval repeats:YES block:^(NSTimer *t) {
         (void)t;
         if (!mouse_look_available()) { mouse_look_release(); return; }
-        if (mouse_look_sample(&g_mouse_look, CACurrentMediaTime(), g_mouse_sensitivity)) push();
+        if (mouse_look_sample(&g_mouse_look, CACurrentMediaTime(), g_controls.sensitivity / 100.0)) push();
     }];
     [NSRunLoop.mainRunLoop addTimer:g_mouse_timer forMode:NSRunLoopCommonModes];
     keyboard_layout_apply();
+}
+static void resume_mouse_capture(void) {
+    if (g_capture_on_focus && mouse_look_available()) { g_capture_on_focus = NO; mouse_look_capture(); }
 }
 static BOOL mouse_look_event(NSEvent *e) {
     if (!g_mouse_timer) return NO;
@@ -913,7 +921,7 @@ static BOOL mouse_look_event(NSEvent *e) {
         if ((NSUInteger)e.buttonNumber >= MOUSE_BUTTONS) return NO;
         BOOL down = e.type == NSEventTypeLeftMouseDown || e.type == NSEventTypeRightMouseDown || e.type == NSEventTypeOtherMouseDown;
         mouse_look_click(&g_mouse_look, (unsigned)e.buttonNumber, down, (e.modifierFlags & NSEventModifierFlagOption) != 0,
-                         (e.modifierFlags & NSEventModifierFlagControl) != 0, g_mouse_bindings);
+                         (e.modifierFlags & NSEventModifierFlagControl) != 0, g_controls.clicks);
         push(); return YES;
     }
     default: return NO;
@@ -925,83 +933,158 @@ static _Atomic double g_picture_aspect = 16.0 / 9.0;
 void front_picture_shape(int w, int h) { if (w > 0 && h > 0) g_picture_aspect = (double)w / h; }
 @interface DmGameView : NSView <NSMenuItemValidation>
 - (NSMenu *)controlsMenu;
+- (BOOL)captureMappingEvent:(NSEvent *)event;
 @end
 @implementation DmGameView {
-    NSUserDefaults *_controlPrefs;
+    NSURL *_profileURL;
+    DmControllerMapping *_mapping;
+}
+- (NSError *)writeControls:(const mac_controls *)next {
+    if (!_profileURL) return [NSError errorWithDomain:NSPOSIXErrorDomain code:ENOENT userInfo:nil];
+    NSError *error = nil;
+    if (![NSFileManager.defaultManager createDirectoryAtURL:_profileURL.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:&error]) return error;
+    int err = mac_controls_save(_profileURL.fileSystemRepresentation, next);
+    if (err) return [NSError errorWithDomain:NSPOSIXErrorDomain code:err userInfo:@{NSLocalizedDescriptionKey:
+        [NSString stringWithFormat:@"Couldn’t save %@. %s", _profileURL.lastPathComponent, strerror(err)]}];
+    return nil;
+}
+- (void)loadControls {
+    mac_controls_init(&g_controls); g_keyboard.profile = &g_controls;
+    NSFileManager *fm = NSFileManager.defaultManager;
+    const char *save = getenv("DM_SAVE");
+    NSURL *dir;
+    if (save && *save) {
+        NSString *path = [fm stringWithFileSystemRepresentation:save length:strlen(save)];
+        dir = [NSURL fileURLWithPath:path isDirectory:YES].URLByStandardizingPath.URLByDeletingLastPathComponent;
+    } else {
+        dir = [[fm URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject URLByAppendingPathComponent:@"nxnative" isDirectory:YES];
+    }
+    _profileURL = [dir URLByAppendingPathComponent:[NSString stringWithFormat:@"controls-%@.tsv", @(DM_GAME_ID)]];
+    int err = _profileURL ? mac_controls_load(_profileURL.fileSystemRepresentation, &g_controls) : ENOENT;
+    if (err == ENOENT) {
+        // Import the Controls menu settings used by earlier builds of this title.
+        NSUserDefaults *old = [[NSUserDefaults alloc] initWithSuiteName:[@"org.nxnative.mouse." stringByAppendingString:@(DM_GAME_ID)]];
+        NSInteger mode = [old integerForKey:@"keyboardLayout"], sensitivity = [old integerForKey:@"sensitivity"];
+        if (mode >= MAC_KEYS_AUTO && mode <= MAC_KEYS_CLASSIC) g_controls.preset = (mac_key_preset)mode;
+        if (sensitivity == 50 || sensitivity == 100 || sensitivity == 200) g_controls.sensitivity = (unsigned)sensitivity;
+        NSArray *keys = @[@"left", @"right", @"middle"];
+        BOOL imported = [old objectForKey:@"keyboardLayout"] || [old objectForKey:@"sensitivity"];
+        for (int i = 0; i < MOUSE_BUTTONS; i++) {
+            id n = [old objectForKey:keys[i]];
+            if (![n isKindOfClass:NSNumber.class]) continue;
+            uint64_t v = [n unsignedLongLongValue];
+            if (v <= UINT16_MAX && !(v & (v - 1))) { g_controls.clicks[i] = v; imported = YES; }
+        }
+        NSError *error = imported ? [self writeControls:&g_controls] : nil;
+        if (error) LOG("[RED] importing controller mapping: %s", error.localizedDescription.UTF8String);
+    } else if (err) LOG("[RED] controller mapping %s: %s", _profileURL.fileSystemRepresentation, strerror(err));
+    g_capture_on_focus = g_controls.preset == MAC_KEYS_MOUSE;
+    keyboard_layout_apply();
+}
+- (NSError *)storeControls:(const mac_controls *)next {
+    NSError *error = [self writeControls:next];
+    if (error) return error;
+    mac_key_preset previous = g_controls.preset;
+    g_controls = *next;
+    mac_keys_clear(&g_keyboard); memset(g_mouse_look.pressed, 0, sizeof g_mouse_look.pressed);
+    if (previous != next->preset) {
+        g_capture_on_focus = next->preset == MAC_KEYS_MOUSE;
+        if (next->preset == MAC_KEYS_CLASSIC) mouse_look_release();
+        resume_mouse_capture();
+    }
+    keyboard_layout_apply(); return nil;
+}
+- (void)saveMenuChange:(const mac_controls *)next {
+    NSError *error = [self storeControls:next];
+    if (error) [NSApp presentError:error];
+    else [_mapping profileChanged];
+}
+- (void)showControllerMapping:(id)sender {
+    (void)sender;
+    BOOL mouse = g_keyboard.mouse_layout;
+    if (g_mouse_timer) g_capture_on_focus = YES;
+    mouse_look_release(); keyboard_release();
+    if (!_mapping) {
+        __weak DmGameView *view = self;
+        _mapping = [[DmControllerMapping alloc] initWithGame:@(DM_GAME_NAME) profile:&g_controls apply:^NSError *(const mac_controls *next) {
+            return [view storeControls:next];
+        }];
+    }
+    _mapping.window.level = g_win.level;
+    [_mapping showEditingMouse:mouse];
+}
+- (BOOL)captureMappingEvent:(NSEvent *)event {
+    return _mapping.window.isKeyWindow && NSApp.isActive && [_mapping captureEvent:event];
 }
 - (void)toggleMouseLook:(id)sender {
-    (void)sender;
+    (void)sender; g_capture_on_focus = NO;
     if (g_mouse_timer) mouse_look_release(); else mouse_look_capture();
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
-    if (item.action == @selector(chooseKeyboardLayout:)) {
-        item.state = item.tag == g_keyboard_preset ? NSControlStateValueOn : NSControlStateValueOff;
-        return YES;
+    if (item.action == @selector(chooseKeyboardLayout:))
+        item.state = item.tag == g_controls.preset ? NSControlStateValueOn : NSControlStateValueOff;
+    if (item.action == @selector(chooseMouseSetting:)) {
+        NSInteger group = item.parentItem.tag;
+        uint64_t value = group == MOUSE_BUTTONS ? g_controls.sensitivity : g_controls.clicks[group];
+        item.state = (uint64_t)item.tag == value ? NSControlStateValueOn : NSControlStateValueOff;
     }
-    if (item.action != @selector(toggleMouseLook:)) return YES;
-    item.state = g_mouse_timer ? NSControlStateValueOn : NSControlStateValueOff;
-    return mouse_look_available();
+    if (item.action == @selector(toggleMouseLook:)) {
+        item.state = g_mouse_timer ? NSControlStateValueOn : NSControlStateValueOff;
+        return mouse_look_available();
+    }
+    return YES;
 }
 - (void)chooseKeyboardLayout:(NSMenuItem *)item {
-    g_keyboard_preset = (mac_key_preset)item.tag;
-    keyboard_layout_apply();
-    [_controlPrefs setInteger:item.tag forKey:@"keyboardLayout"];
-}
-- (void)applyMouseChoice:(NSMenuItem *)item {
-    NSInteger group = item.parentItem.tag;
-    if (group == MOUSE_BUTTONS) g_mouse_sensitivity = item.tag / 100.0;
-    else g_mouse_bindings[group] = (uint64_t)item.tag;
-    for (NSMenuItem *choice in item.menu.itemArray) choice.state = choice == item ? NSControlStateValueOn : NSControlStateValueOff;
+    mac_controls next = g_controls; next.preset = (mac_key_preset)item.tag;
+    [self saveMenuChange:&next];
+    if (g_controls.preset == MAC_KEYS_MOUSE) { g_capture_on_focus = YES; resume_mouse_capture(); }
 }
 - (void)chooseMouseSetting:(NSMenuItem *)item {
-    mouse_look_release();   // a button can still be held under its old binding
-    [self applyMouseChoice:item];
-    [_controlPrefs setInteger:item.tag forKey:item.parentItem.representedObject];
+    mac_controls next = g_controls; NSInteger group = item.parentItem.tag;
+    if (group == MOUSE_BUTTONS) next.sensitivity = (unsigned)item.tag;
+    else next.clicks[group] = (uint64_t)item.tag;
+    [self saveMenuChange:&next];
 }
 - (NSMenu *)controlsMenu {
-    _controlPrefs = [[NSUserDefaults alloc] initWithSuiteName:[@"org.nxnative.mouse." stringByAppendingString:@(DM_GAME_ID)]];
+    [self loadControls];
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Controls"];
+    NSMenuItem *mapping = [menu addItemWithTitle:@"Controller Mapping…" action:@selector(showControllerMapping:) keyEquivalent:@","];
+    mapping.target = self;
     NSMenuItem *toggle = [menu addItemWithTitle:@"Mouse Look" action:@selector(toggleMouseLook:) keyEquivalent:@"m"];
     toggle.target = self; toggle.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     NSMenu *layouts = [[NSMenu alloc] initWithTitle:@"Keyboard Layout"];
     [menu addItemWithTitle:layouts.title action:nil keyEquivalent:@""].submenu = layouts;
     NSArray<NSString *> *names = @[@"Follow Mouse Look", @"Keyboard + Mouse", @"Classic"];
-    NSInteger savedLayout = [_controlPrefs integerForKey:@"keyboardLayout"];
-    g_keyboard_preset = savedLayout >= 0 && savedLayout < (NSInteger)names.count ? (mac_key_preset)savedLayout : MAC_KEYS_AUTO;
     for (NSUInteger i = 0; i < names.count; i++) {
         NSMenuItem *choice = [layouts addItemWithTitle:names[i] action:@selector(chooseKeyboardLayout:) keyEquivalent:@""];
         choice.target = self; choice.tag = (NSInteger)i;
     }
-    keyboard_layout_apply();
     [menu addItem:NSMenuItem.separatorItem];
-    // Group tags use AppKit's button numbers. The last group stores the sensitivity as a percentage.
-    const struct { NSInteger group; NSString *title, *pref; NSInteger initial; } settings[] = {
-        {MOUSE_LEFT, @"Left Click", @"left", DM_BTN_Y}, {MOUSE_MIDDLE, @"Middle Click", @"middle", DM_BTN_RS},
-        {MOUSE_RIGHT, @"Right Click", @"right", DM_BTN_ZR}, {MOUSE_BUTTONS, @"Camera Sensitivity", @"sensitivity", 100},
+    const struct { NSInteger group; NSString *title; } settings[] = {
+        {MOUSE_LEFT, @"Left Click"}, {MOUSE_MIDDLE, @"Middle Click"}, {MOUSE_RIGHT, @"Right Click"}, {MOUSE_BUTTONS, @"Camera Sensitivity"},
     };
     for (size_t i = 0; i < sizeof settings / sizeof settings[0]; i++) {
         NSMenuItem *parent = [menu addItemWithTitle:settings[i].title action:nil keyEquivalent:@""];
-        parent.tag = settings[i].group; parent.representedObject = settings[i].pref;
+        parent.tag = settings[i].group;
         NSMenu *sub = parent.submenu = [[NSMenu alloc] initWithTitle:settings[i].title];
         if (parent.tag == MOUSE_BUTTONS) {
             for (NSNumber *percent in @[@50, @100, @200]) {
                 NSMenuItem *choice = [sub addItemWithTitle:[percent.stringValue stringByAppendingString:@"%"] action:@selector(chooseMouseSetting:) keyEquivalent:@""];
                 choice.tag = percent.integerValue; choice.target = self;
             }
-        } else {
-            for (int bit = -1; bit < 16; bit++) {
-                NSMenuItem *choice = [sub addItemWithTitle:bit < 0 ? @"None" : @(pad_hid_names[bit]) action:@selector(chooseMouseSetting:) keyEquivalent:@""];
-                choice.tag = bit < 0 ? 0 : 1 << bit; choice.target = self;
-            }
+        } else for (int bit = -1; bit < 16; bit++) {
+            NSMenuItem *choice = [sub addItemWithTitle:bit < 0 ? @"None" : @(pad_hid_names[bit]) action:@selector(chooseMouseSetting:) keyEquivalent:@""];
+            choice.tag = bit < 0 ? 0 : 1 << bit; choice.target = self;
         }
-        NSNumber *saved = [_controlPrefs objectForKey:settings[i].pref];
-        NSMenuItem *choice = [saved isKindOfClass:NSNumber.class] ? [sub itemWithTag:saved.integerValue] : nil;
-        [self applyMouseChoice:choice ?: [sub itemWithTag:settings[i].initial]];
     }
     return menu;
 }
 - (void)mouseDown:(NSEvent *)e {
     if (game_input_blocked()) return;
+    if (g_controls.preset == MAC_KEYS_MOUSE && !g_mouse_timer && mouse_look_available()) {
+        mouse_look_capture();
+        if (g_mouse_timer) return;
+    }
     g_mouse_down = 1; [self mouseDragged:e];
 }
 - (void)mouseDragged:(NSEvent *)e {
@@ -1942,6 +2025,9 @@ void front_run(void (*guest)(void)) {
         [app addItemWithTitle:[@"Quit " stringByAppendingString:@(DM_GAME_NAME)] action:@selector(terminate:) keyEquivalent:@"q"];
         [[bar addItemWithTitle:@"Controls" action:nil keyEquivalent:@""] setSubmenu:[(DmGameView *)v controlsMenu]];
         atexit(mouse_cursor_restore);
+        [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidBecomeActiveNotification object:NSApp queue:nil
+            usingBlock:^(NSNotification *n) { (void)n; resume_mouse_capture(); }];
+        dispatch_async(dispatch_get_main_queue(), ^{ resume_mouse_capture(); });
         // Cheats (hle_cheats.c): the rows rebuild on every open through the delegate, the same rows the file reload changes
         g_cheats_menu = [DmCheatsMenuDelegate new];
         NSMenu *cm = [[NSMenu alloc] initWithTitle:@"Cheats"];
@@ -1995,16 +2081,18 @@ void front_run(void (*guest)(void)) {
         NSEventMask mouseEvents = NSEventMaskMouseMoved | NSEventMaskLeftMouseDragged | NSEventMaskRightMouseDragged | NSEventMaskOtherMouseDragged |
             NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp | NSEventMaskRightMouseDown | NSEventMaskRightMouseUp | NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp;
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp | NSEventMaskFlagsChanged | mouseEvents handler:^NSEvent *(NSEvent *e) {
+            if (e.type != NSEventTypeKeyDown && e.type != NSEventTypeKeyUp && e.type != NSEventTypeFlagsChanged)
+                return e.window == win && mouse_look_event(e) ? nil : e;
+            if ([(DmGameView *)v captureMappingEvent:e]) return nil;
             if (e.type == NSEventTypeFlagsChanged) {
                 // A modifier event can be windowless. Only take it for the active game, and pass it on to AppKit.
                 if (win.isKeyWindow && NSApp.isActive && (!e.window || e.window == win) && !game_input_blocked() && !g_text_box &&
-                    mac_keys_modifiers(&g_keyboard, e.keyCode, (e.modifierFlags & NSEventModifierFlagShift) != 0,
+                    mac_keys_modifiers(&g_keyboard, e.keyCode, (e.modifierFlags & dm_mac_modifier_flag(e.keyCode)) != 0,
                                        (e.modifierFlags & NSEventModifierFlagCommand) != 0)) push();
                 return e;
             }
             if (e.window != win) return e;
-            if (e.type != NSEventTypeKeyDown && e.type != NSEventTypeKeyUp) return mouse_look_event(e) ? nil : e;
-            if (e.type == NSEventTypeKeyDown && e.keyCode == 53 && g_mouse_timer) { mouse_look_release(); return nil; }   // Escape
+            if (e.type == NSEventTypeKeyDown && e.keyCode == MAC_ESCAPE && g_mouse_timer) { g_capture_on_focus = NO; mouse_look_release(); return nil; }   // Escape
             if (e.type == NSEventTypeKeyDown && (e.modifierFlags & NSEventModifierFlagCommand)) return e;   // ⌘ shortcuts go to the menu; a key released while ⌘ is held still reaches the game, or it would stay pressed
             if (e.type == NSEventTypeKeyDown && fn_shortcut(e)) return e;   // fn (Globe) + a letter is the system's (fn+F full screen, GitHub issue #873), not the game's F
             if (!e.isARepeat) on_key(e, e.type == NSEventTypeKeyDown);

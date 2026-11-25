@@ -46,13 +46,21 @@ static void keyboard_and_mouse(void) {
     mouse_look_click(&m, MOUSE_RIGHT, 1, 0, 0, bindings);
     uint64_t keyboard = DM_BTN_Y;
     int32_t rx = DM_STICK_MAX, ry = 0;
-    mouse_look_merge(&m, &keyboard, &rx, &ry);
+    keyboard |= mouse_look_buttons(&m);
+    mouse_look_axes(&m, 0, &rx, &ry);
     assert(keyboard == (DM_BTN_Y | DM_BTN_ZR) && rx == DM_STICK_MAX && ry == 3000);
 
+    // While the mouse moves in combined mode both axes come from the pointer, independent of bound keys.
+    rx = DM_STICK_MAX; ry = -DM_STICK_MAX;
+    mouse_look_axes(&m, 1, &rx, &ry);
+    assert(rx == -2000 && ry == 3000);
+    m.ry = 0; mouse_look_axes(&m, 1, &rx, &ry);
+    assert(rx == -2000 && ry == 0);
     // Capture ends during a drag. The keyboard still holds Y and Shift-Up.
     m = (mouse_look){0};
     keyboard = DM_BTN_Y; rx = 0; ry = DM_STICK_MAX;
-    mouse_look_merge(&m, &keyboard, &rx, &ry);
+    keyboard |= mouse_look_buttons(&m);
+    mouse_look_axes(&m, 0, &rx, &ry);
     assert(keyboard == DM_BTN_Y && rx == 0 && ry == DM_STICK_MAX);
 }
 

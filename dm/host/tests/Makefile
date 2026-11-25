@@ -84,6 +84,8 @@ run: $(B)/t_mii $(B)/t_net_eventfd $(B)/t_language $(B)/t_motion $(B)/t_heap_siz
 	$(B)/t_pad_hid
 	$(B)/t_mouse_look
 	$(B)/t_keyboard_mac
+	$(B)/t_control_profile_mac
+	$(B)/t_controller_mapping_mac
 	$(B)/t_pad_gip
 	$(B)/t_pad_hid_mac
 	$(B)/t_pad_pro
@@ -531,6 +533,12 @@ $(B)/t_pad_hid: t_pad_hid.c ../pad_hid.h ../dm_input.h | $(B)
 run: $(B)/t_mouse_look
 $(B)/t_mouse_look: t_mouse_look.c ../mouse_look.h ../dm_input.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -I.. -o $@ t_mouse_look.c -lm
+run: $(B)/t_control_profile_mac
+$(B)/t_control_profile_mac: t_control_profile_mac.c ../control_profile_mac.c ../control_profile_mac.h ../keyboard_mac.h ../dm_input.h | $(B)
+	$(CLANG) -O1 -g -Wall -Wextra -Werror -I.. -o $@ t_control_profile_mac.c ../control_profile_mac.c
+run: $(B)/t_controller_mapping_mac
+$(B)/t_controller_mapping_mac: t_controller_mapping_mac.m ../controller_mapping_mac.m ../controller_mapping_mac.h ../control_profile_mac.c ../control_profile_mac.h ../keyboard_mac.h ../mouse_look.h ../dm_input.h | $(B)
+	$(CLANG) -O1 -g -fobjc-arc -Wall -Wextra -Werror -I.. -o $@ t_controller_mapping_mac.m ../controller_mapping_mac.m ../control_profile_mac.c -framework Cocoa -framework Carbon
 run: $(B)/t_keyboard_mac
 $(B)/t_keyboard_mac: t_keyboard_mac.c ../keyboard_mac.h ../mouse_look.h ../dm_input.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -I.. -o $@ t_keyboard_mac.c -lm

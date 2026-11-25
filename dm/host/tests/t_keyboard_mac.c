@@ -20,20 +20,20 @@ static void layouts(void) {
         mac_keys_layout(&k, MAC_KEYS_AUTO, captured);
         for (unsigned i = 0; i < sizeof map / sizeof map[0]; i++) {
             mac_keys_event(&k, map[i].code, true, false);
-            assert(mac_keys_read(&k).buttons == (captured ? map[i].mouse : map[i].classic));
+            assert(mac_keys_read(&k, 0).buttons == (captured ? map[i].mouse : map[i].classic));
             mac_keys_event(&k, map[i].code, false, true);
-            assert(!mac_keys_read(&k).buttons);
+            assert(!mac_keys_read(&k, 0).buttons);
         }
     }
     mac_keys_event(&k, W, true, false);
     mac_keys_event(&k, SPACE, true, false);
     mac_keys_layout(&k, MAC_KEYS_AUTO, false);
-    assert(!k.mouse_layout && mac_keys_read(&k).ly == DM_STICK_MAX && !mac_keys_read(&k).buttons);
+    assert(!k.mouse_layout && mac_keys_read(&k, 0).ly == DM_STICK_MAX && !mac_keys_read(&k, 0).buttons);
     assert(!mac_keys_event(&k, SPACE, false, false));   // the release cannot turn jump into shake
     mac_keys_layout(&k, MAC_KEYS_MOUSE, false); assert(k.mouse_layout);
     mac_keys_layout(&k, MAC_KEYS_CLASSIC, true); assert(!k.mouse_layout);
     mac_keys_event(&k, A, true, false);
-    assert(mac_keys_read(&k).lx == -DM_STICK_MAX && mac_keys_read(&k).ly == DM_STICK_MAX);
+    assert(mac_keys_read(&k, 0).lx == -DM_STICK_MAX && mac_keys_read(&k, 0).ly == DM_STICK_MAX);
     assert(!mac_keys_event(&k, 128, true, false));
 }
 
@@ -41,31 +41,31 @@ static void movement(void) {
     mac_keyboard k = {0};
     mac_keys_layout(&k, MAC_KEYS_MOUSE, true);
     mac_keys_modifiers(&k, SHIFT, true, false);
-    assert(!mac_keys_read(&k).buttons);   // Shift at rest does not cancel a menu
+    assert(!mac_keys_read(&k, 0).buttons);   // Shift at rest does not cancel a menu
     mac_keys_event(&k, W, true, true);
-    assert(mac_keys_read(&k).buttons == DM_BTN_B && mac_keys_read(&k).ly == DM_STICK_MAX);
+    assert(mac_keys_read(&k, 0).buttons == DM_BTN_B && mac_keys_read(&k, 0).ly == DM_STICK_MAX);
     mac_keys_event(&k, D, true, true);
     mac_keys_event(&k, SPACE, true, true);
-    mac_key_report r = mac_keys_read(&k);
+    mac_key_report r = mac_keys_read(&k, 0);
     assert(r.lx == 23170 && r.ly == 23170 && r.buttons == (DM_BTN_B | DM_BTN_X));
     mac_keys_event(&k, A, true, true);   // opposing horizontal directions cancel, W stays full
-    assert(mac_keys_read(&k).lx == 0 && mac_keys_read(&k).ly == DM_STICK_MAX);
+    assert(mac_keys_read(&k, 0).lx == 0 && mac_keys_read(&k, 0).ly == DM_STICK_MAX);
     mac_keys_event(&k, A, false, true);
     mac_keys_modifiers(&k, RIGHT_SHIFT, true, false);
     mac_keys_modifiers(&k, SHIFT, true, false);   // left Shift lifted with right Shift still down
-    assert(mac_keys_read(&k).buttons & DM_BTN_B);
+    assert(mac_keys_read(&k, 0).buttons & DM_BTN_B);
     mac_keys_modifiers(&k, RIGHT_SHIFT, false, false);
     mac_keys_event(&k, Z, true, false);
-    assert(mac_keys_read(&k).lx == 11585 && mac_keys_read(&k).buttons == DM_BTN_X);
+    assert(mac_keys_read(&k, 0).lx == 11585 && mac_keys_read(&k, 0).buttons == DM_BTN_X);
     mac_keys_event(&k, D, false, false);
-    assert(mac_keys_read(&k).ly == DM_STICK_MAX / 2);
+    assert(mac_keys_read(&k, 0).ly == DM_STICK_MAX / 2);
     mac_keys_modifiers(&k, SHIFT, true, false);   // sprint takes precedence over slow walking
-    assert(mac_keys_read(&k).ly == DM_STICK_MAX && (mac_keys_read(&k).buttons & DM_BTN_B));
+    assert(mac_keys_read(&k, 0).ly == DM_STICK_MAX && (mac_keys_read(&k, 0).buttons & DM_BTN_B));
     mac_keys_modifiers(&k, COMMAND, true, true);
     mac_keys_modifiers(&k, COMMAND, true, false);   // releasing the mouse-look shortcut does not start sprinting
-    assert(!(mac_keys_read(&k).buttons & DM_BTN_B));
+    assert(!(mac_keys_read(&k, 0).buttons & DM_BTN_B));
     mac_keys_clear(&k);   // focus loss, minimization, text input or controller prompt
-    r = mac_keys_read(&k);
+    r = mac_keys_read(&k, 0);
     assert(k.mouse_layout && !r.buttons && !r.lx && !r.ly && !r.rx && !r.ry);
 }
 
@@ -75,15 +75,15 @@ static void combined_input(void) {
     mac_keys_event(&k, E, true, false);
     mac_keys_event(&k, J, true, false);
     mac_keys_event(&k, E, false, false);
-    assert(mac_keys_read(&k).buttons == DM_BTN_A);   // releasing one confirm key leaves the other held
+    assert(mac_keys_read(&k, 0).buttons == DM_BTN_A);   // releasing one confirm key leaves the other held
     mac_keys_event(&k, UP, true, true);
     assert(!mac_keys_event(&k, UP, true, false));   // a repeat after lifting Shift keeps its original binding
-    assert(mac_keys_read(&k).ry == DM_STICK_MAX);
+    assert(mac_keys_read(&k, 0).ry == DM_STICK_MAX);
     mac_keys_event(&k, UP, false, false);
     mac_keys_event(&k, RIGHT, true, false);
     mac_keys_event(&k, ONE, true, false);
     mac_keys_event(&k, RIGHT, false, true);
-    assert(mac_keys_read(&k).buttons == (DM_BTN_A | DM_BTN_RIGHT));
+    assert(mac_keys_read(&k, 0).buttons == (DM_BTN_A | DM_BTN_RIGHT));
 
     const uint64_t bindings[MOUSE_BUTTONS] = {DM_BTN_Y, DM_BTN_ZR, DM_BTN_A};
     mouse_look mouse = {.rx = -3700, .ry = 1800};
@@ -92,8 +92,8 @@ static void combined_input(void) {
     mac_keys_event(&k, J, false, false);
     mac_keys_event(&k, W, true, false);
     mac_keys_event(&k, SPACE, true, false);
-    mac_key_report r = mac_keys_read(&k);
-    mouse_look_merge(&mouse, &r.buttons, &r.rx, &r.ry);
+    mac_key_report r = mac_keys_read(&k, mouse_look_buttons(&mouse));
+    mouse_look_axes(&mouse, k.mouse_layout, &r.rx, &r.ry);
     assert(r.buttons == (DM_BTN_A | DM_BTN_RIGHT | DM_BTN_X | DM_BTN_ZR));
     assert(r.ly == DM_STICK_MAX && r.rx == -3700 && r.ry == 1800);
 }
